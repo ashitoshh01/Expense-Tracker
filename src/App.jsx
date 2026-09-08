@@ -229,6 +229,16 @@ export default function App() {
   useEffect(() => {
     verifyAndConnectCloud()
 
+    // Safety timeout: if Firebase doesn't respond within 4 seconds,
+    // proceed with localStorage data so the app doesn't hang forever
+    const safetyTimeout = setTimeout(() => {
+      if (!dataLoadedRef.current) {
+        console.warn('Firebase timeout — proceeding with local data')
+        setCloudStatus('error')
+        markDataLoaded()
+      }
+    }, 4000)
+
     // Real-time listener for ongoing sync
     const unsubscribe = subscribeUserData(
       (cloudData, fromCache) => {
@@ -249,7 +259,10 @@ export default function App() {
         markDataLoaded()
       }
     )
-    return () => unsubscribe()
+    return () => {
+      clearTimeout(safetyTimeout)
+      unsubscribe()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
