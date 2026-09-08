@@ -7,9 +7,17 @@ import {
   Landmark, Download, Settings, HelpCircle, Info, LogOut,
   Tag, FileText, FileJson, AlertCircle, Target, ArrowDownToLine,
   CircleDollarSign, CreditCard, X, Smartphone,
-  Cloud, CloudCheck, CloudOff, Database, RefreshCw
+  Cloud, CloudCheck, CloudOff, Database, RefreshCw,
+  UploadCloud, DownloadCloud, ExternalLink
 } from 'lucide-react'
-import { subscribeUserData, saveUserData } from './firebase'
+import {
+  subscribeUserData,
+  saveUserData,
+  checkFirestoreConnection,
+  fetchFreshFromServer,
+  forcePushToCloud,
+  firebaseConfig
+} from './firebase'
 
 // ─── Helpers ────────────────────────────────────────────────
 const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7)
@@ -143,12 +151,60 @@ export default function App() {
   }, [])
 
   // ─── Firebase Database Synchronization ───────────────────────
-  const [cloudStatus, setCloudStatus] = useState('connecting') // 'connecting' | 'synced' | 'saving' | 'error'
+  const [cloudStatus, setCloudStatus] = useState('connecting') // 'connecting' | 'synced' | 'saving' | 'not_created' | 'error'
+
+  // Diagnostic check and initial cloud hydration
+  const verifyAndConnectCloud = useCallback(async () => {
+    setCloudStatus('connecting')
+    try {
+      const check = await checkFirestoreConnection()
+      if (!check.ok) {
+        if (check.notCreated) {
+          setCloudStatus('not_created')
+        } else {
+          setCloudStatus('error')
+        }
+        return
+      }
+
+      // Firestore database exists!
+      if (check.exists && check.data) {
+        // Hydrate from server (overwriting local cache with live cloud data)
+        const cloudData = check.data
+        setState((prev) => {
+          const merged = {
+            balance: typeof cloudData.balance === 'number' ? cloudData.balance : prev.balance,
+            savings: typeof cloudData.savings === 'number' ? cloudData.savings : prev.savings,
+            loans: Array.isArray(cloudData.loans) ? cloudData.loans : prev.loans,
+            transactions: Array.isArray(cloudData.transactions) ? cloudData.transactions : prev.transactions,
+            savingsGoal: typeof cloudData.savingsGoal === 'number' ? cloudData.savingsGoal : prev.savingsGoal,
+            lastSalaryMonth: cloudData.lastSalaryMonth || prev.lastSalaryMonth,
+          }
+          Object.keys(merged).forEach((k) => persist(k, merged[k]))
+          return merged
+        })
+        setCloudStatus('synced')
+      } else {
+        // Document not yet in Firestore: push current state to seed database
+        try {
+          await forcePushToCloud(state)
+          setCloudStatus('synced')
+        } catch (err) {
+          setCloudStatus('error')
+        }
+      }
+    } catch (err) {
+      setCloudStatus('error')
+    }
+  }, [state])
 
   useEffect(() => {
+    verifyAndConnectCloud()
+
+    // Real-time listener
     const unsubscribe = subscribeUserData(
-      (cloudData) => {
-        if (cloudData) {
+      (cloudData, fromCache) => {
+        if (cloudData && !fromCache) {
           setState((prev) => {
             const merged = {
               balance: typeof cloudData.balance === 'number' ? cloudData.balance : prev.balance,
@@ -162,19 +218,15 @@ export default function App() {
             return merged
           })
           setCloudStatus('synced')
-        } else {
-          // Document does not exist yet in Firestore: seed it with current local state
-          saveUserData(state)
-            .then(() => setCloudStatus('synced'))
-            .catch((err) => {
-              console.warn('Initial cloud seed failed:', err)
-              setCloudStatus('error')
-            })
         }
       },
       (err) => {
-        console.warn('Firestore subscription error:', err)
-        setCloudStatus('error')
+        const msg = String(err?.message || err)
+        if (msg.includes('PERMISSION_DENIED') || msg.includes('Cloud Firestore API has not been used')) {
+          setCloudStatus('not_created')
+        } else {
+          setCloudStatus('error')
+        }
       }
     )
     return () => unsubscribe()
@@ -191,7 +243,12 @@ export default function App() {
         .then(() => setCloudStatus('synced'))
         .catch((err) => {
           console.warn('Firestore save error:', err)
-          setCloudStatus('error')
+          const msg = String(err?.message || err)
+          if (msg.includes('PERMISSION_DENIED') || msg.includes('Cloud Firestore API has not been used')) {
+            setCloudStatus('not_created')
+          } else {
+            setCloudStatus('error')
+          }
         })
       return next
     })
@@ -199,20 +256,77 @@ export default function App() {
 
   const handleManualSync = async () => {
     setCloudStatus('saving')
-    showToast('Syncing with Firebase Cloud Database...')
+    showToast('Checking Firebase Cloud Database...')
+    await verifyAndConnectCloud()
+  }
+
+  const handlePushToCloud = async () => {
+    setCloudStatus('saving')
+    showToast('Uploading all data directly to Firebase...')
     try {
-      await saveUserData(state)
+      await forcePushToCloud(state)
       setCloudStatus('synced')
-      showToast('Firebase Database synced successfully! ✓', 'income')
+      showToast('Data uploaded to Firebase Cloud! ✓', 'income')
     } catch (err) {
-      setCloudStatus('error')
       const msg = String(err?.message || err)
-      if (msg.includes('PERMISSION_DENIED') || err?.code === 'permission-denied') {
-        showToast('Enable Cloud Firestore in Firebase Console (expense-b7fcb)', 'error')
+      if (msg.includes('PERMISSION_DENIED') || msg.includes('Cloud Firestore API has not been used')) {
+        setCloudStatus('not_created')
+        showToast('Firestore not created yet in Firebase Console', 'error')
       } else {
-        showToast('Database sync error. Changes saved to local storage.', 'error')
+        setCloudStatus('error')
+        showToast('Push failed: ' + (err?.message || 'network error'), 'error')
       }
     }
+  }
+
+  const handleFetchFreshFromCloud = async () => {
+    setCloudStatus('saving')
+    showToast('Fetching fresh data from Firebase server...')
+    try {
+      const freshData = await fetchFreshFromServer()
+      if (freshData) {
+        setState((prev) => {
+          const merged = {
+            balance: typeof freshData.balance === 'number' ? freshData.balance : prev.balance,
+            savings: typeof freshData.savings === 'number' ? freshData.savings : prev.savings,
+            loans: Array.isArray(freshData.loans) ? freshData.loans : prev.loans,
+            transactions: Array.isArray(freshData.transactions) ? freshData.transactions : prev.transactions,
+            savingsGoal: typeof freshData.savingsGoal === 'number' ? freshData.savingsGoal : prev.savingsGoal,
+            lastSalaryMonth: freshData.lastSalaryMonth || prev.lastSalaryMonth,
+          }
+          Object.keys(merged).forEach((k) => persist(k, merged[k]))
+          return merged
+        })
+        setCloudStatus('synced')
+        showToast('Loaded fresh data from Firebase Cloud! ✓', 'income')
+      } else {
+        showToast('No cloud data yet. Push local data first.', 'error')
+        setCloudStatus('synced')
+      }
+    } catch (err) {
+      const msg = String(err?.message || err)
+      if (msg.includes('PERMISSION_DENIED') || msg.includes('Cloud Firestore API has not been used')) {
+        setCloudStatus('not_created')
+        showToast('Firestore not created yet in Firebase Console', 'error')
+      } else {
+        setCloudStatus('error')
+        showToast('Fetch failed: ' + (err?.message || 'network error'), 'error')
+      }
+    }
+  }
+
+  const handleClearLocalCache = () => {
+    setConfirm({
+      title: 'Clear Local Cache?',
+      message: 'This clears the browser cache so you can verify data fetched directly from Firebase.',
+      variant: 'blue',
+      onConfirm: () => {
+        Object.values(KEYS).forEach((k) => localStorage.removeItem(k))
+        setConfirm(null)
+        showToast('Local cache cleared! Re-connecting to cloud...')
+        verifyAndConnectCloud()
+      }
+    })
   }
 
   // ─── Auto salary logic ──────────────────────────────────────
@@ -504,6 +618,7 @@ export default function App() {
             onAddExpense={() => setModal('spent')}
             cloudStatus={cloudStatus}
             onCloudClick={handleManualSync}
+            onRetryCloud={verifyAndConnectCloud}
           />
         )}
         {screen === 'transactions' && (
@@ -545,6 +660,9 @@ export default function App() {
             isInstalled={isInstalled}
             cloudStatus={cloudStatus}
             onManualSync={handleManualSync}
+            onPushToCloud={handlePushToCloud}
+            onFetchFresh={handleFetchFreshFromCloud}
+            onClearCache={handleClearLocalCache}
           />
         )}
       </div>
@@ -656,7 +774,7 @@ function BottomNavigation({ active, onNavigate }) {
 // ═══════════════════════════════════════════════════════════════
 // HOME SCREEN
 // ═══════════════════════════════════════════════════════════════
-function HomeScreen({ state, monthlyEarned, monthlySpent, balanceChangePercent, onNavigate, onAddMoney, onAddExpense, cloudStatus, onCloudClick }) {
+function HomeScreen({ state, monthlyEarned, monthlySpent, balanceChangePercent, onNavigate, onAddMoney, onAddExpense, cloudStatus, onCloudClick, onRetryCloud }) {
   const recentTxs = state.transactions.slice(0, 5)
 
   return (
@@ -675,16 +793,54 @@ function HomeScreen({ state, monthlyEarned, monthlySpent, balanceChangePercent, 
             className={`cloud-badge ${cloudStatus || 'synced'}`}
             onClick={onCloudClick}
             aria-label={`Database status: ${cloudStatus}`}
-            title={`Firebase Database: ${cloudStatus === 'synced' ? 'Synced with Cloud Firestore' : cloudStatus === 'saving' ? 'Saving to Firestore...' : cloudStatus === 'connecting' ? 'Connecting...' : 'Offline'}`}
+            title={`Firebase Database: ${cloudStatus === 'synced' ? 'Synced with Cloud Firestore' : cloudStatus === 'saving' ? 'Saving to Firestore...' : cloudStatus === 'connecting' ? 'Connecting...' : 'Database not created yet'}`}
           >
             {cloudStatus === 'synced' && <CloudCheck size={16} />}
             {cloudStatus === 'saving' && <RefreshCw size={14} className="spin-icon" />}
             {cloudStatus === 'connecting' && <Cloud size={16} />}
+            {cloudStatus === 'not_created' && <CloudOff size={16} />}
             {cloudStatus === 'error' && <CloudOff size={16} />}
           </button>
           <div className="header-avatar" onClick={() => onNavigate('more')} style={{ cursor: 'pointer' }}>AL</div>
         </div>
       </div>
+
+      {/* Cloud Firestore Setup Notice if not created in Firebase console */}
+      {cloudStatus === 'not_created' && (
+        <div className="firestore-setup-banner">
+          <div className="setup-banner-top">
+            <span className="setup-badge">Action Required</span>
+            <span className="setup-badge-sub">Firebase Console</span>
+          </div>
+          <div className="setup-banner-title">Activate Cloud Firestore Database</div>
+          <p className="setup-banner-desc">
+            Your Firebase project <strong>expense-b7fcb</strong> is connected, but Cloud Firestore database has not been created yet in the Firebase Console.
+          </p>
+          <div className="setup-banner-steps">
+            <div className="setup-step-row">
+              <span className="setup-step-num">1</span>
+              <span>Open Firebase Console and click <strong>Create database</strong></span>
+            </div>
+            <div className="setup-step-row">
+              <span className="setup-step-num">2</span>
+              <span>Choose <strong>Start in test mode</strong> and click Enable</span>
+            </div>
+          </div>
+          <div className="setup-banner-buttons">
+            <a
+              href="https://console.firebase.google.com/project/expense-b7fcb/firestore"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="setup-action-link"
+            >
+              Open Firebase Console <ExternalLink size={14} />
+            </a>
+            <button className="setup-action-retry" onClick={onRetryCloud}>
+              <RefreshCw size={14} /> Test Connection
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Greeting */}
       <div className="greeting-section">
@@ -1317,7 +1473,7 @@ function LoansScreen({ loans, onRepaid, onAddLoan, onNavigate }) {
 // ═══════════════════════════════════════════════════════════════
 // MORE SCREEN
 // ═══════════════════════════════════════════════════════════════
-function MoreScreen({ onNavigate, onExport, onInstallApp, isInstalled, cloudStatus, onManualSync }) {
+function MoreScreen({ onNavigate, onExport, onInstallApp, isInstalled, cloudStatus, onManualSync, onPushToCloud, onFetchFresh, onClearCache }) {
   return (
     <div className="screen">
       <div className="page-header">
@@ -1336,30 +1492,61 @@ function MoreScreen({ onNavigate, onExport, onInstallApp, isInstalled, cloudStat
 
       {/* Cloud Database Status Card */}
       <div className="database-status-card">
-        <div className="database-status-left">
-          <div className="database-icon-wrap">
-            <Database size={20} />
-          </div>
-          <div className="database-info">
-            <div className="database-title">Firebase Cloud Database</div>
-            <div className="database-sub">
-              <span className={`database-dot ${cloudStatus || 'synced'}`} />
-              {cloudStatus === 'synced' && 'Synced (expense-b7fcb)'}
-              {cloudStatus === 'saving' && 'Saving to Firestore...'}
-              {cloudStatus === 'connecting' && 'Connecting...'}
-              {cloudStatus === 'error' && 'Offline / Local cache active'}
+        <div className="database-status-header">
+          <div className="database-status-left">
+            <div className="database-icon-wrap">
+              <Database size={20} />
+            </div>
+            <div className="database-info">
+              <div className="database-title">Firebase Cloud Database</div>
+              <div className="database-sub">
+                <span className={`database-dot ${cloudStatus || 'synced'}`} />
+                {cloudStatus === 'synced' && 'Synced & Active (expense-b7fcb)'}
+                {cloudStatus === 'saving' && 'Saving to Firestore...'}
+                {cloudStatus === 'connecting' && 'Connecting to Firestore...'}
+                {cloudStatus === 'not_created' && 'Database Not Created in Console'}
+                {cloudStatus === 'error' && 'Offline / Local cache active'}
+              </div>
             </div>
           </div>
+          <button
+            className="database-sync-btn"
+            onClick={onManualSync}
+            disabled={cloudStatus === 'saving'}
+            aria-label="Sync with Firebase"
+          >
+            <RefreshCw size={13} className={cloudStatus === 'saving' ? 'spin-icon' : ''} />
+            {cloudStatus === 'saving' ? 'Syncing...' : 'Sync'}
+          </button>
         </div>
-        <button
-          className="database-sync-btn"
-          onClick={onManualSync}
-          disabled={cloudStatus === 'saving'}
-          aria-label="Sync with Firebase"
-        >
-          <RefreshCw size={13} className={cloudStatus === 'saving' ? 'spin-icon' : ''} />
-          {cloudStatus === 'saving' ? 'Syncing...' : 'Sync'}
-        </button>
+
+        {cloudStatus === 'not_created' && (
+          <div className="database-alert-box">
+            <div className="database-alert-text">
+              Firestore has not been created yet in your project. Click below to create it in Firebase Console:
+            </div>
+            <a
+              href="https://console.firebase.google.com/project/expense-b7fcb/firestore"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="database-console-btn"
+            >
+              Open Firebase Console <ExternalLink size={13} />
+            </a>
+          </div>
+        )}
+
+        <div className="database-actions-grid">
+          <button className="db-action-btn" onClick={onPushToCloud} title="Directly upload all local data to Cloud Firestore">
+            <UploadCloud size={15} /> Push to Cloud
+          </button>
+          <button className="db-action-btn" onClick={onFetchFresh} title="Fetch directly from Firebase server bypassing cache">
+            <DownloadCloud size={15} /> Fetch from Cloud
+          </button>
+          <button className="db-action-btn warning" onClick={onClearCache} title="Clear browser cache to test fresh cloud load">
+            <Trash2 size={15} /> Clear Cache
+          </button>
+        </div>
       </div>
 
       {/* App Shortcut / Install Card */}

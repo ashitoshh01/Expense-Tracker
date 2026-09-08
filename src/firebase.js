@@ -5,12 +5,12 @@ import {
   doc,
   setDoc,
   getDoc,
-  onSnapshot,
-  enableIndexedDbPersistence
+  getDocFromServer,
+  onSnapshot
 } from 'firebase/firestore'
 
 // Firebase configuration from .env
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
@@ -33,16 +33,56 @@ if (typeof window !== 'undefined') {
     if (supported) {
       analytics = getAnalytics(app)
     }
-  }).catch(() => {
-    // Analytics not supported in this environment
-  })
+  }).catch(() => {})
 }
 
 // Document reference for user's expense tracker data
-const DATA_COLLECTION = 'wallet_data'
-const DATA_DOC = 'current_user'
+export const DATA_COLLECTION = 'wallet_data'
+export const DATA_DOC = 'current_user'
 
-const getUserDocRef = () => doc(db, DATA_COLLECTION, DATA_DOC)
+export const getUserDocRef = () => doc(db, DATA_COLLECTION, DATA_DOC)
+
+/**
+ * Diagnostic function to test live Firestore connection
+ * @returns {Promise<{ ok: boolean, notCreated?: boolean, exists?: boolean, data?: any, error?: string, consoleUrl?: string }>}
+ */
+export async function checkFirestoreConnection() {
+  try {
+    const docRef = getUserDocRef()
+    const snap = await getDocFromServer(docRef)
+    return {
+      ok: true,
+      exists: snap.exists(),
+      data: snap.exists() ? snap.data() : null,
+    }
+  } catch (err) {
+    const msg = String(err?.message || err)
+    const notCreated =
+      msg.includes('Cloud Firestore API has not been used') ||
+      msg.includes('PERMISSION_DENIED') ||
+      msg.includes('not found') ||
+      err?.code === 'permission-denied'
+    return {
+      ok: false,
+      notCreated,
+      error: msg,
+      consoleUrl: `https://console.firebase.google.com/project/${firebaseConfig.projectId || 'expense-b7fcb'}/firestore`,
+    }
+  }
+}
+
+/**
+ * Fetch fresh data directly from Cloud Firestore server (bypassing local cache)
+ * @returns {Promise<Object|null>}
+ */
+export async function fetchFreshFromServer() {
+  const docRef = getUserDocRef()
+  const snap = await getDocFromServer(docRef)
+  if (snap.exists()) {
+    return snap.data()
+  }
+  return null
+}
 
 /**
  * Subscribe to real-time updates from Cloud Firestore
@@ -55,11 +95,11 @@ export function subscribeUserData(onData, onError) {
   return onSnapshot(
     docRef,
     (snapshot) => {
+      // Check if snapshot contains data from server or cache
       if (snapshot.exists()) {
-        onData(snapshot.data())
+        onData(snapshot.data(), snapshot.metadata.fromCache)
       } else {
-        // Document doesn't exist yet in cloud
-        onData(null)
+        onData(null, snapshot.metadata.fromCache)
       }
     },
     (err) => {
@@ -70,28 +110,30 @@ export function subscribeUserData(onData, onError) {
 }
 
 /**
- * Fetch one-time data from Cloud Firestore
- * @returns {Promise<Object|null>}
+ * Force write to Cloud Firestore immediately (no debouncing)
+ * @param {Object} data State data to save
+ * @returns {Promise<Object>}
  */
-export async function fetchUserData() {
-  try {
-    const docRef = getUserDocRef()
-    const snapshot = await getDoc(docRef)
-    if (snapshot.exists()) {
-      return snapshot.data()
-    }
-    return null
-  } catch (err) {
-    console.warn('Firestore fetch error:', err)
-    return null
+export async function forcePushToCloud(data) {
+  const docRef = getUserDocRef()
+  const payload = {
+    balance: Number(data.balance) || 0,
+    savings: Number(data.savings) || 0,
+    loans: Array.isArray(data.loans) ? data.loans : [],
+    transactions: Array.isArray(data.transactions) ? data.transactions : [],
+    savingsGoal: Number(data.savingsGoal) || 1000,
+    lastSalaryMonth: data.lastSalaryMonth || '',
+    updatedAt: new Date().toISOString(),
   }
+  await setDoc(docRef, payload, { merge: true })
+  return payload
 }
 
-// Debounce timer for saving to prevent excessive Firestore write bursts
+// Debounce timer for saving during normal user interactions
 let saveTimeout = null
 
 /**
- * Save user data to Cloud Firestore (with debouncing)
+ * Save user data to Cloud Firestore (debounced 300ms)
  * @param {Object} data State data to save
  * @returns {Promise<void>}
  */
@@ -100,22 +142,12 @@ export async function saveUserData(data) {
     if (saveTimeout) clearTimeout(saveTimeout)
     saveTimeout = setTimeout(async () => {
       try {
-        const docRef = getUserDocRef()
-        const payload = {
-          balance: Number(data.balance) || 0,
-          savings: Number(data.savings) || 0,
-          loans: Array.isArray(data.loans) ? data.loans : [],
-          transactions: Array.isArray(data.transactions) ? data.transactions : [],
-          savingsGoal: Number(data.savingsGoal) || 1000,
-          lastSalaryMonth: data.lastSalaryMonth || '',
-          updatedAt: new Date().toISOString(),
-        }
-        await setDoc(docRef, payload, { merge: true })
-        resolve()
+        const payload = await forcePushToCloud(data)
+        resolve(payload)
       } catch (err) {
         console.error('Firestore save error:', err)
         reject(err)
       }
-    }, 250)
+    }, 300)
   })
 }
