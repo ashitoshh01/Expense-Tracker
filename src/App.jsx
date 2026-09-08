@@ -1,4 +1,13 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import {
+  Home, Receipt, PiggyBank, Menu, Search, ChevronRight,
+  Plus, Minus, Wallet, TrendingUp, TrendingDown, ArrowLeft,
+  Calendar, Trash2, DollarSign, ShoppingCart, Utensils, Plane,
+  Building2, Heart, GraduationCap, MoreHorizontal, Eye,
+  Landmark, Download, Settings, HelpCircle, Info, LogOut,
+  Tag, FileText, FileJson, AlertCircle, Target, ArrowDownToLine,
+  CircleDollarSign, CreditCard, X, Smartphone
+} from 'lucide-react'
 
 // ─── Helpers ────────────────────────────────────────────────
 const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7)
@@ -24,6 +33,23 @@ const currentYearMonth = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
 }
 
+const getMonthName = () => {
+  const d = new Date()
+  return d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })
+}
+
+const getShortMonth = () => {
+  const d = new Date()
+  return d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })
+}
+
+const getGreeting = () => {
+  const h = new Date().getHours()
+  if (h < 12) return 'Good morning,'
+  if (h < 17) return 'Good afternoon,'
+  return 'Good evening,'
+}
+
 // ─── localStorage persistence ───────────────────────────────
 const KEYS = {
   balance: 'et_balance',
@@ -31,6 +57,7 @@ const KEYS = {
   loans: 'et_loans',
   transactions: 'et_transactions',
   lastSalaryMonth: 'et_lastSalaryMonth',
+  savingsGoal: 'et_savingsGoal',
 }
 
 const loadState = () => ({
@@ -39,6 +66,7 @@ const loadState = () => ({
   loans: JSON.parse(localStorage.getItem(KEYS.loans) || '[]'),
   transactions: JSON.parse(localStorage.getItem(KEYS.transactions) || '[]'),
   lastSalaryMonth: localStorage.getItem(KEYS.lastSalaryMonth) || '',
+  savingsGoal: Number(localStorage.getItem(KEYS.savingsGoal)) || 1000,
 })
 
 const persist = (key, value) => {
@@ -49,7 +77,7 @@ const persist = (key, value) => {
   }
 }
 
-// ─── Spend categories ───────────────────────────────────────
+// ─── Categories ───────────────────────────────────────────
 const SPEND_CATEGORIES = [
   'Outside Food',
   'Material from me/friend',
@@ -57,14 +85,24 @@ const SPEND_CATEGORIES = [
   'Other',
 ]
 
-const CATEGORY_ICONS = {
-  'Loan': '🤝',
-  'Salary': '💰',
-  'Savings': '🏦',
-  'Outside Food': '🍔',
-  'Material from me/friend': '🛒',
-  'Give friend money': '💸',
-  'Other': '📝',
+const ALL_CATEGORIES = [
+  { id: 'Salary', name: 'Salary', icon: CircleDollarSign, type: 'income' },
+  { id: 'Shopping', name: 'Shopping', icon: ShoppingCart, type: 'expense' },
+  { id: 'Outside Food', name: 'Food', icon: Utensils, type: 'expense' },
+  { id: 'Travel', name: 'Travel', icon: Plane, type: 'expense' },
+  { id: 'Rent', name: 'Rent', icon: Building2, type: 'expense' },
+  { id: 'Health', name: 'Health', icon: Heart, type: 'expense' },
+  { id: 'Material from me/friend', name: 'Education', icon: GraduationCap, type: 'expense' },
+  { id: 'Other', name: 'Other', icon: MoreHorizontal, type: 'expense' },
+]
+
+const getCategoryIcon = (category) => {
+  const cat = ALL_CATEGORIES.find(c => c.id === category)
+  if (cat) return cat.icon
+  if (category === 'Loan') return Landmark
+  if (category === 'Savings') return PiggyBank
+  if (category === 'Give friend money') return CreditCard
+  return Receipt
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -72,10 +110,35 @@ const CATEGORY_ICONS = {
 // ═══════════════════════════════════════════════════════════════
 export default function App() {
   const [state, setState] = useState(loadState)
-  const [modal, setModal] = useState(null) // 'add' | 'spent' | 'withdraw' | null
+  const [screen, setScreen] = useState('home') // home | transactions | savings | more | addTx | loans
+  const [modal, setModal] = useState(null) // 'add' | 'spent' | 'withdraw' | 'export' | 'addSavings' | null
   const [toast, setToast] = useState(null)
   const [confirm, setConfirm] = useState(null)
   const toastTimer = useRef(null)
+
+  // ─── PWA & Install Shortcut ──────────────────────────────────
+  const [deferredPrompt, setDeferredPrompt] = useState(null)
+  const [isInstalled, setIsInstalled] = useState(false)
+
+  useEffect(() => {
+    if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true) {
+      setIsInstalled(true)
+    }
+    const handlePrompt = (e) => {
+      e.preventDefault()
+      setDeferredPrompt(e)
+    }
+    const handleInstalled = () => {
+      setIsInstalled(true)
+      setDeferredPrompt(null)
+    }
+    window.addEventListener('beforeinstallprompt', handlePrompt)
+    window.addEventListener('appinstalled', handleInstalled)
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handlePrompt)
+      window.removeEventListener('appinstalled', handleInstalled)
+    }
+  }, [])
 
   // ─── Sync state → localStorage ──────────────────────────────
   const updateState = useCallback((updates) => {
@@ -96,7 +159,7 @@ export default function App() {
         type: 'salary',
         category: 'Salary',
         amount: 2000,
-        note: '',
+        note: 'Salary',
         date: todayStr(),
       }
       const savingsTx = {
@@ -114,9 +177,8 @@ export default function App() {
         transactions: newTransactions,
         lastSalaryMonth: cm,
       })
-      showToast('💰 Salary ₹2,000 credited! ₹500 moved to savings.', 'salary')
+      showToast('Salary ₹2,000 credited! ₹500 moved to savings.', 'salary')
     }
-    // Only run once on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -167,6 +229,41 @@ export default function App() {
     showToast(`-₹${formatAmount(amt)} spent on ${category}`)
   }
 
+  // ─── Add Transaction (unified) ─────────────────────────────
+  const handleAddTransaction = ({ type, amount, category, note, date }) => {
+    const amt = Number(amount)
+    if (type === 'income') {
+      const tx = {
+        id: genId(),
+        type: 'add',
+        category: category || 'Salary',
+        amount: amt,
+        note: note || '',
+        date: date || todayStr(),
+      }
+      updateState({
+        balance: state.balance + amt,
+        transactions: [tx, ...state.transactions],
+      })
+      showToast(`+₹${formatAmount(amt)} income added`)
+    } else {
+      const tx = {
+        id: genId(),
+        type: 'spent',
+        category: category || 'Other',
+        amount: amt,
+        note: note || '',
+        date: date || todayStr(),
+      }
+      updateState({
+        balance: state.balance - amt,
+        transactions: [tx, ...state.transactions],
+      })
+      showToast(`-₹${formatAmount(amt)} expense recorded`)
+    }
+    setScreen('transactions')
+  }
+
   // ─── Mark loan as repaid ────────────────────────────────────
   const handleRepaid = (loanId) => {
     const loan = state.loans.find((l) => l.id === loanId)
@@ -180,7 +277,7 @@ export default function App() {
           loans: state.loans.filter((l) => l.id !== loanId),
         })
         setConfirm(null)
-        showToast(`Loan from ${loan.name} marked as repaid ✓`)
+        showToast(`Loan from ${loan.name} marked as repaid`)
       },
     })
   }
@@ -218,6 +315,36 @@ export default function App() {
     showToast(`₹${formatAmount(amt)} withdrawn from savings`)
   }
 
+  // ─── Add to savings ────────────────────────────────────────
+  const handleAddToSavings = ({ amount }) => {
+    const amt = Number(amount)
+    if (amt > state.balance) {
+      showToast('Cannot save more than your balance')
+      return
+    }
+    const tx = {
+      id: genId(),
+      type: 'auto_save',
+      category: 'Savings',
+      amount: amt,
+      note: 'Manually added to savings',
+      date: todayStr(),
+    }
+    updateState({
+      balance: state.balance - amt,
+      savings: state.savings + amt,
+      transactions: [tx, ...state.transactions],
+    })
+    setModal(null)
+    showToast(`₹${formatAmount(amt)} added to savings`)
+  }
+
+  // ─── Update savings goal ───────────────────────────────────
+  const handleUpdateGoal = (goal) => {
+    updateState({ savingsGoal: Number(goal) })
+    showToast('Savings goal updated')
+  }
+
   // ─── Export ─────────────────────────────────────────────────
   const exportCSV = () => {
     if (state.transactions.length === 0) {
@@ -235,7 +362,8 @@ export default function App() {
     a.download = `expenses_${todayStr()}.csv`
     a.click()
     URL.revokeObjectURL(url)
-    showToast('CSV exported ✓')
+    setModal(null)
+    showToast('CSV exported successfully')
   }
 
   const exportJSON = () => {
@@ -257,7 +385,8 @@ export default function App() {
     a.download = `expenses_${todayStr()}.json`
     a.click()
     URL.revokeObjectURL(url)
-    showToast('JSON exported ✓')
+    setModal(null)
+    showToast('JSON exported successfully')
   }
 
   // ─── Monthly summary ───────────────────────────────────────
@@ -270,185 +399,90 @@ export default function App() {
     .filter((t) => t.type === 'add' || t.type === 'salary')
     .reduce((sum, t) => sum + t.amount, 0)
 
-  // Category breakdown
-  const categoryBreakdown = {}
-  monthlyTxs
-    .filter((t) => t.type === 'spent')
-    .forEach((t) => {
-      categoryBreakdown[t.category] = (categoryBreakdown[t.category] || 0) + t.amount
-    })
+  // ─── Previous month balance for % change ───────────────────
+  const prevMonthBalance = useMemo(() => {
+    const d = new Date()
+    d.setMonth(d.getMonth() - 1)
+    const pm = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    const prevTxs = state.transactions.filter(t => t.date.startsWith(pm))
+    const earned = prevTxs.filter(t => t.type === 'add' || t.type === 'salary').reduce((s, t) => s + t.amount, 0)
+    const spent = prevTxs.filter(t => t.type === 'spent').reduce((s, t) => s + t.amount, 0)
+    return earned - spent
+  }, [state.transactions])
+
+  const balanceChangePercent = useMemo(() => {
+    if (prevMonthBalance === 0) return monthlyEarned > 0 ? 100 : 0
+    return (((monthlyEarned - monthlySpent) / Math.abs(prevMonthBalance)) * 100).toFixed(1)
+  }, [prevMonthBalance, monthlyEarned, monthlySpent])
+
+  // ─── Savings transactions ──────────────────────────────────
+  const savingsTxs = state.transactions.filter(t => t.type === 'auto_save')
+
+  // ─── Navigate ─────────────────────────────────────────────
+  const navigate = (s) => {
+    setScreen(s)
+  }
 
   // ─── Render ─────────────────────────────────────────────────
   return (
     <>
-      {/* ── Header ── */}
-      <header className="header">
-        <div className="header-icon">₹</div>
-        <div>
-          <h1>Expense Tracker</h1>
-          <div className="header-subtitle">Personal finance manager</div>
-        </div>
-      </header>
-
-      {/* ── Balance Card ── */}
-      <div className="balance-card">
-        <div className="balance-label">Available Balance</div>
-        <div className={`balance-amount ${state.balance < 0 ? 'negative' : ''}`}>
-          <span className="balance-rupee">₹</span>
-          {formatAmount(Math.abs(state.balance))}
-          {state.balance < 0 && <span style={{ fontSize: '20px', marginLeft: '4px' }}>⚠️</span>}
-        </div>
-        <div className="balance-date">{formatDate(todayStr())}</div>
-      </div>
-
-      {/* ── Action Buttons ── */}
-      <div className="action-buttons">
-        <button className="btn-action btn-add" id="btn-add-amount" onClick={() => setModal('add')}>
-          <span className="btn-icon">+</span>
-          Add Amount
-        </button>
-        <button className="btn-action btn-spent" id="btn-spent" onClick={() => setModal('spent')}>
-          <span className="btn-icon">−</span>
-          Spent
-        </button>
-      </div>
-
-      {/* ── Savings Card ── */}
-      <div className="savings-card">
-        <div className="savings-icon">🏦</div>
-        <div className="savings-info">
-          <div className="savings-label">Total Savings</div>
-          <div className="savings-amount">
-            <span className="savings-rupee">₹</span>
-            {formatAmount(state.savings)}
-          </div>
-        </div>
-        {state.savings > 0 && (
-          <button className="savings-withdraw-btn" onClick={() => setModal('withdraw')}>
-            Withdraw
-          </button>
+      <div className="app-container">
+        {screen === 'home' && (
+          <HomeScreen
+            state={state}
+            monthlyEarned={monthlyEarned}
+            monthlySpent={monthlySpent}
+            balanceChangePercent={balanceChangePercent}
+            onNavigate={navigate}
+            onAddMoney={() => setModal('add')}
+            onAddExpense={() => setModal('spent')}
+          />
+        )}
+        {screen === 'transactions' && (
+          <TransactionsScreen
+            transactions={state.transactions}
+            onNavigate={navigate}
+            onDeleteTx={handleDeleteTx}
+          />
+        )}
+        {screen === 'addTx' && (
+          <AddTransactionScreen
+            onSubmit={handleAddTransaction}
+            onBack={() => setScreen('transactions')}
+          />
+        )}
+        {screen === 'savings' && (
+          <SavingsScreen
+            state={state}
+            savingsTxs={savingsTxs}
+            onUpdateGoal={handleUpdateGoal}
+            onAddToSavings={() => setModal('addSavings')}
+            onWithdraw={() => setModal('withdraw')}
+            onNavigate={navigate}
+          />
+        )}
+        {screen === 'loans' && (
+          <LoansScreen
+            loans={state.loans}
+            onRepaid={handleRepaid}
+            onAddLoan={() => setModal('add')}
+            onNavigate={navigate}
+          />
+        )}
+        {screen === 'more' && (
+          <MoreScreen
+            onNavigate={navigate}
+            onExport={() => setModal('export')}
+            onInstallApp={() => setModal('installApp')}
+            isInstalled={isInstalled}
+          />
         )}
       </div>
 
-      {/* ── Monthly Summary ── */}
-      {monthlyTxs.length > 0 && (
-        <div className="summary-card">
-          <div className="summary-title">
-            📊 This Month
-          </div>
-          <div className="summary-grid">
-            <div className="summary-item">
-              <div className="summary-item-label">Earned</div>
-              <div className="summary-item-value green">₹{formatAmount(monthlyEarned)}</div>
-            </div>
-            <div className="summary-item">
-              <div className="summary-item-label">Spent</div>
-              <div className="summary-item-value red">₹{formatAmount(monthlySpent)}</div>
-            </div>
-            {Object.entries(categoryBreakdown).map(([cat, amt]) => (
-              <div className="summary-item" key={cat}>
-                <div className="summary-item-label">{cat}</div>
-                <div className="summary-item-value red">₹{formatAmount(amt)}</div>
-              </div>
-            ))}
-          </div>
-        </div>
+      {/* Bottom Navigation */}
+      {screen !== 'addTx' && (
+        <BottomNavigation active={screen} onNavigate={navigate} />
       )}
-
-      {/* ── Loans ── */}
-      <div className="section-header">
-        <div className="section-title">
-          🤝 Loans
-          {state.loans.length > 0 && (
-            <span className="section-badge">{state.loans.length}</span>
-          )}
-        </div>
-      </div>
-      <div className="loans-list">
-        {state.loans.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-state-icon">📋</div>
-            <div>No active loans</div>
-          </div>
-        ) : (
-          state.loans.map((loan) => (
-            <div className="loan-item" key={loan.id}>
-              <div className="loan-avatar">{getInitial(loan.name)}</div>
-              <div className="loan-info">
-                <div className="loan-name">{loan.name}</div>
-                <div className="loan-date">{formatDate(loan.date)}</div>
-              </div>
-              <div className="loan-amount">₹{formatAmount(loan.amount)}</div>
-              <button
-                className="loan-repaid-btn"
-                onClick={() => handleRepaid(loan.id)}
-              >
-                Repaid
-              </button>
-            </div>
-          ))
-        )}
-      </div>
-
-      {/* ── Transaction History ── */}
-      <div className="section-header">
-        <div className="section-title">
-          📒 Transactions
-          {state.transactions.length > 0 && (
-            <span className="section-badge">{state.transactions.length}</span>
-          )}
-        </div>
-      </div>
-
-      {/* ── Export buttons ── */}
-      {state.transactions.length > 0 && (
-        <div className="export-section">
-          <button className="btn-export" onClick={exportCSV}>
-            📄 Export CSV
-          </button>
-          <button className="btn-export" onClick={exportJSON}>
-            📋 Export JSON
-          </button>
-        </div>
-      )}
-
-      <div className="transactions-list">
-        {state.transactions.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-state-icon">📭</div>
-            <div>No transactions yet</div>
-          </div>
-        ) : (
-          state.transactions.map((tx) => (
-            <div className="tx-item" key={tx.id}>
-              <div className={`tx-icon-wrap ${tx.type === 'add' ? 'add' : tx.type === 'spent' ? 'spent' : tx.type === 'salary' ? 'salary' : 'savings'}`}>
-                {CATEGORY_ICONS[tx.category] || '📝'}
-              </div>
-              <div className="tx-info">
-                <div className="tx-category">
-                  {tx.category}
-                  {tx.note ? ` — ${tx.note}` : ''}
-                </div>
-                <div className="tx-meta">
-                  <span>{formatDate(tx.date)}</span>
-                  <span className="tx-meta-dot" />
-                  <span>{tx.type === 'add' ? 'Added' : tx.type === 'spent' ? 'Spent' : tx.type === 'salary' ? 'Salary' : 'Auto Save'}</span>
-                </div>
-              </div>
-              <div className={`tx-amount ${tx.type === 'spent' ? 'negative' : tx.type === 'auto_save' ? 'neutral' : 'positive'}`}>
-                {tx.type === 'spent' || tx.type === 'auto_save' ? '−' : '+'}₹{formatAmount(tx.amount)}
-              </div>
-              <button
-                className="tx-delete-btn"
-                title="Delete transaction"
-                onClick={() => handleDeleteTx(tx.id)}
-              >
-                🗑
-              </button>
-            </div>
-          ))
-        )}
-      </div>
 
       {/* ── Modals ── */}
       <div className={`overlay ${modal ? 'active' : ''}`} onClick={() => setModal(null)} />
@@ -460,6 +494,31 @@ export default function App() {
           maxAmount={state.savings}
           onSubmit={handleWithdraw}
           onClose={() => setModal(null)}
+        />
+      )}
+      {modal === 'addSavings' && (
+        <AddSavingsSheet
+          maxAmount={state.balance}
+          onSubmit={handleAddToSavings}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal === 'export' && (
+        <ExportSheet
+          onExportCSV={exportCSV}
+          onExportJSON={exportJSON}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal === 'installApp' && (
+        <InstallAppSheet
+          installPrompt={deferredPrompt}
+          isInstalled={isInstalled}
+          onClose={() => setModal(null)}
+          onInstallSuccess={() => {
+            showToast('App shortcut added successfully! 🎉', 'income')
+            setIsInstalled(true)
+          }}
         />
       )}
 
@@ -488,6 +547,776 @@ export default function App() {
         {toast?.msg}
       </div>
     </>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BOTTOM NAVIGATION
+// ═══════════════════════════════════════════════════════════════
+function BottomNavigation({ active, onNavigate }) {
+  const tabs = [
+    { id: 'home', label: 'Home', icon: Home },
+    { id: 'transactions', label: 'Transactions', icon: Receipt },
+    { id: 'savings', label: 'Savings', icon: PiggyBank },
+    { id: 'more', label: 'More', icon: Menu },
+  ]
+
+  return (
+    <nav className="bottom-nav">
+      {tabs.map((tab) => {
+        const Icon = tab.icon
+        const isActive = active === tab.id || (active === 'loans' && tab.id === 'more')
+        return (
+          <button
+            key={tab.id}
+            className={`nav-item ${isActive ? 'active' : ''}`}
+            onClick={() => onNavigate(tab.id)}
+          >
+            <span className="nav-icon">
+              <Icon />
+            </span>
+            <span className="nav-label">{tab.label}</span>
+          </button>
+        )
+      })}
+    </nav>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HOME SCREEN
+// ═══════════════════════════════════════════════════════════════
+function HomeScreen({ state, monthlyEarned, monthlySpent, balanceChangePercent, onNavigate, onAddMoney, onAddExpense }) {
+  const recentTxs = state.transactions.slice(0, 5)
+
+  return (
+    <div className="screen">
+      {/* Header */}
+      <div className="mobile-header">
+        <div className="header-brand" onClick={() => onNavigate('more')} role="button" aria-label="Wallet FIX">
+          <img src="/apple-touch-icon.png" alt="Wallet FIX" className="header-brand-logo" />
+          <div className="header-brand-title">
+            <span className="brand-name-wallet">Wallet</span>
+            <span className="brand-name-fix">FIX</span>
+          </div>
+        </div>
+        <div className="header-avatar" onClick={() => onNavigate('more')} style={{ cursor: 'pointer' }}>AL</div>
+      </div>
+
+      {/* Greeting */}
+      <div className="greeting-section">
+        <div className="greeting-sub">{getGreeting()}</div>
+        <div className="greeting-name">Ashitosh 👋</div>
+        <div className="greeting-message">Let's make today a great financial day!</div>
+      </div>
+
+      {/* Balance Card */}
+      <div className="balance-card">
+        <div className="balance-left">
+          <div className="balance-label">
+            <Eye size={14} />
+            Available Balance
+          </div>
+          <div className={`balance-amount ${state.balance < 0 ? 'negative' : ''}`}>
+            <span className="balance-rupee">₹</span>
+            {formatAmount(Math.abs(state.balance))}
+          </div>
+          <div className={`balance-change ${Number(balanceChangePercent) < 0 ? 'negative-change' : ''}`}>
+            {Number(balanceChangePercent) >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
+            {Number(balanceChangePercent) >= 0 ? '+' : ''}{balanceChangePercent}% from last month
+          </div>
+        </div>
+        <div className="balance-right">
+          <Wallet />
+        </div>
+      </div>
+
+      {/* Action Cards */}
+      <div className="action-cards">
+        <button className="action-card income" onClick={onAddMoney}>
+          <div className="action-card-icon">
+            <Plus />
+          </div>
+          <div>
+            <div className="action-card-title">Add Money</div>
+            <div className="action-card-sub">Income / Deposit</div>
+          </div>
+        </button>
+        <button className="action-card expense" onClick={onAddExpense}>
+          <div className="action-card-icon">
+            <Minus />
+          </div>
+          <div>
+            <div className="action-card-title">Add Expense</div>
+            <div className="action-card-sub">Track Spending</div>
+          </div>
+        </button>
+      </div>
+
+      {/* This Month */}
+      <MonthlySummary
+        earned={monthlyEarned}
+        spent={monthlySpent}
+      />
+
+      {/* Quick Stats */}
+      <div className="quick-stats-section">
+        <div className="quick-stats-title">Quick Stats</div>
+        <div className="quick-stats-grid">
+          <div className="quick-stat-item">
+            <div className="quick-stat-label">Total Savings</div>
+            <div className="quick-stat-value green">₹{formatAmount(state.savings)}</div>
+          </div>
+          <div className="quick-stat-item">
+            <div className="quick-stat-label">Transactions</div>
+            <div className="quick-stat-value accent">{state.transactions.length}</div>
+          </div>
+          <div className="quick-stat-item">
+            <div className="quick-stat-label">Active Loans</div>
+            <div className="quick-stat-value">{state.loans.length}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Recent Transactions */}
+      {recentTxs.length > 0 && (
+        <div className="recent-section">
+          <div className="recent-header">
+            <div className="recent-title">Recent Transactions</div>
+            <button className="recent-view-all" onClick={() => onNavigate('transactions')}>
+              View All <ChevronRight size={14} />
+            </button>
+          </div>
+          <div className="tx-list">
+            {recentTxs.map((tx) => (
+              <TransactionItem key={tx.id} tx={tx} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MONTHLY SUMMARY COMPONENT
+// ═══════════════════════════════════════════════════════════════
+function MonthlySummary({ earned, spent }) {
+  return (
+    <div className="month-card">
+      <div className="month-card-header">
+        <div className="month-card-title">
+          <Calendar size={18} />
+          This Month
+        </div>
+        <div className="month-card-period">
+          {getShortMonth()} <ChevronRight size={14} />
+        </div>
+      </div>
+      <div className="month-stats">
+        <div>
+          <div className="month-stat-label">Income</div>
+          <div className="month-stat-value income">₹{formatAmount(earned)}</div>
+        </div>
+        <div>
+          <div className="month-stat-label">Expenses</div>
+          <div className="month-stat-value expense">₹{formatAmount(spent)}</div>
+        </div>
+      </div>
+      {earned >= spent ? (
+        <div className="month-message">
+          <TrendingUp />
+          You're spending less than you earn! 🎉
+        </div>
+      ) : (
+        <div className="month-message warning">
+          <TrendingDown />
+          You're spending more than you earn!
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TRANSACTION ITEM COMPONENT
+// ═══════════════════════════════════════════════════════════════
+function TransactionItem({ tx, showDate, showDelete, onDelete }) {
+  const Icon = getCategoryIcon(tx.category)
+  const iconClass = tx.type === 'add' ? 'add' : tx.type === 'spent' ? 'spent' : tx.type === 'salary' ? 'salary' : 'savings'
+
+  return (
+    <div className="tx-item">
+      <div className={`tx-icon-wrap ${iconClass}`}>
+        <Icon />
+      </div>
+      <div className="tx-info">
+        <div className="tx-category">{tx.category}</div>
+        <div className="tx-note">{tx.note || (tx.type === 'salary' ? 'Salary' : tx.type === 'auto_save' ? 'Auto-saved from salary' : tx.category)}</div>
+        {showDate && <div className="tx-meta">{formatDate(tx.date)}</div>}
+      </div>
+      <div className="tx-right">
+        <div className={`tx-amount ${tx.type === 'spent' ? 'negative' : tx.type === 'auto_save' ? 'neutral' : 'positive'}`}>
+          {tx.type === 'spent' || tx.type === 'auto_save' ? '−' : '+'}₹{formatAmount(tx.amount)}
+        </div>
+      </div>
+      {showDelete && (
+        <button
+          className="tx-delete-btn"
+          title="Delete transaction"
+          onClick={(e) => { e.stopPropagation(); onDelete?.(tx.id); }}
+        >
+          <Trash2 />
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TRANSACTIONS SCREEN
+// ═══════════════════════════════════════════════════════════════
+function TransactionsScreen({ transactions, onNavigate, onDeleteTx }) {
+  const [filter, setFilter] = useState('all')
+  const [showSearch, setShowSearch] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+
+  const filteredTxs = useMemo(() => {
+    let txs = [...transactions]
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      txs = txs.filter(t =>
+        t.category.toLowerCase().includes(q) ||
+        (t.note && t.note.toLowerCase().includes(q))
+      )
+    }
+
+    switch (filter) {
+      case 'income':
+        return txs.filter(t => t.type === 'add' || t.type === 'salary')
+      case 'expenses':
+        return txs.filter(t => t.type === 'spent')
+      case 'savings':
+        return txs.filter(t => t.type === 'auto_save')
+      default:
+        return txs
+    }
+  }, [transactions, filter, searchQuery])
+
+  if (showSearch) {
+    return (
+      <div className="search-overlay">
+        <div className="search-header">
+          <div className="search-input-wrap">
+            <Search size={18} />
+            <input
+              className="search-input"
+              type="text"
+              placeholder="Search transactions..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              autoFocus
+            />
+            {searchQuery && (
+              <button style={{ border: 'none', background: 'none', cursor: 'pointer', padding: 4 }} onClick={() => setSearchQuery('')}>
+                <X size={16} color="#94A3B8" />
+              </button>
+            )}
+          </div>
+          <button className="search-cancel-btn" onClick={() => { setShowSearch(false); setSearchQuery(''); }}>
+            Cancel
+          </button>
+        </div>
+        <div className="search-results">
+          <div className="tx-list">
+            {filteredTxs.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-state-icon"><Search /></div>
+                <div className="empty-state-title">No results found</div>
+                <div className="empty-state-sub">Try a different search term</div>
+              </div>
+            ) : (
+              filteredTxs.map(tx => (
+                <TransactionItem key={tx.id} tx={tx} showDate onDelete={onDeleteTx} showDelete />
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="screen">
+      <div className="page-header">
+        <h1 className="page-title">Transactions</h1>
+        <button className="page-header-action" onClick={() => setShowSearch(true)}>
+          <Search />
+        </button>
+      </div>
+
+      {/* Filter Pills */}
+      <div className="filter-pills">
+        {['all', 'income', 'expenses', 'savings'].map(f => (
+          <button
+            key={f}
+            className={`filter-pill ${filter === f ? 'active' : ''}`}
+            onClick={() => setFilter(f)}
+          >
+            {f.charAt(0).toUpperCase() + f.slice(1)}
+          </button>
+        ))}
+      </div>
+
+      {/* Month Group */}
+      <div className="month-group-header">{getMonthName()}</div>
+
+      {/* Transaction List */}
+      <div className="transactions-list-page">
+        {filteredTxs.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-state-icon"><Receipt /></div>
+            <div className="empty-state-title">No transactions yet</div>
+            <div className="empty-state-sub">Start tracking your finances</div>
+          </div>
+        ) : (
+          filteredTxs.map(tx => (
+            <TransactionItem key={tx.id} tx={tx} showDate onDelete={onDeleteTx} showDelete />
+          ))
+        )}
+      </div>
+
+      {/* Add Transaction Button */}
+      <div className="fab-container">
+        <button className="fab-btn" onClick={() => onNavigate('addTx')}>
+          <Plus size={20} />
+          Add Transaction
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ADD TRANSACTION SCREEN
+// ═══════════════════════════════════════════════════════════════
+function AddTransactionScreen({ onSubmit, onBack }) {
+  const [txType, setTxType] = useState('income')
+  const [amount, setAmount] = useState('')
+  const [category, setCategory] = useState('Salary')
+  const [note, setNote] = useState('')
+  const [date, setDate] = useState(todayStr())
+  const [errors, setErrors] = useState({})
+
+  const categories = txType === 'income'
+    ? ALL_CATEGORIES.filter(c => c.type === 'income')
+    : ALL_CATEGORIES.filter(c => c.type === 'expense')
+
+  useEffect(() => {
+    setCategory(txType === 'income' ? 'Salary' : 'Outside Food')
+  }, [txType])
+
+  const validate = () => {
+    const e = {}
+    const amt = Number(amount)
+    if (!amount || isNaN(amt) || amt <= 0) e.amount = 'Enter a valid amount'
+    setErrors(e)
+    return Object.keys(e).length === 0
+  }
+
+  const handleSubmit = () => {
+    if (validate()) {
+      onSubmit({ type: txType, amount, category, note, date })
+    }
+  }
+
+  return (
+    <div className="screen add-tx-screen">
+      <div className="page-header">
+        <div className="page-header-left">
+          <button className="back-btn" onClick={onBack}>
+            <ArrowLeft size={22} />
+          </button>
+          <h1 className="page-title">Add Transaction</h1>
+        </div>
+      </div>
+
+      {/* Type Toggle */}
+      <div className="type-toggle">
+        <button
+          className={`type-toggle-btn income-btn ${txType === 'income' ? 'active' : ''}`}
+          onClick={() => setTxType('income')}
+        >
+          <span className="toggle-icon"><Plus size={16} /></span>
+          Income
+        </button>
+        <button
+          className={`type-toggle-btn expense-btn ${txType === 'expense' ? 'active' : ''}`}
+          onClick={() => setTxType('expense')}
+        >
+          <span className="toggle-icon"><Minus size={16} /></span>
+          Expense
+        </button>
+      </div>
+
+      <div className="form-section">
+        {/* Amount */}
+        <div className="form-group">
+          <label className="form-label">Amount</label>
+          <div className={`amount-input-wrap ${errors.amount ? 'error' : ''}`}>
+            <span className="amount-prefix">₹</span>
+            <input
+              className="amount-input"
+              type="number"
+              inputMode="decimal"
+              placeholder="0"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+            <span className="amount-input-icon">
+              <DollarSign />
+            </span>
+          </div>
+          {errors.amount && (
+            <div className="form-error">
+              <AlertCircle size={14} /> {errors.amount}
+            </div>
+          )}
+        </div>
+
+        {/* Category Grid */}
+        <div className="form-group">
+          <label className="form-label">Category</label>
+          <div className="category-grid">
+            {categories.map((cat) => {
+              const CatIcon = cat.icon
+              return (
+                <button
+                  key={cat.id}
+                  className={`category-item ${category === cat.id ? 'active' : ''}`}
+                  onClick={() => setCategory(cat.id)}
+                  type="button"
+                >
+                  <div className="category-icon">
+                    <CatIcon />
+                  </div>
+                  <span className="category-name">{cat.name}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Description */}
+        <div className="form-group">
+          <label className="form-label">
+            Description <span className="form-label-optional">(Optional)</span>
+          </label>
+          <input
+            className="form-input"
+            type="text"
+            placeholder={`e.g. ${txType === 'income' ? 'Salary for September' : 'Lunch at restaurant'}`}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
+        </div>
+
+        {/* Date */}
+        <div className="form-group">
+          <label className="form-label">Date</label>
+          <div className="date-input-wrap">
+            <Calendar size={20} />
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Save Button */}
+      <div className="save-btn-container">
+        <button className="save-btn" onClick={handleSubmit}>
+          <Plus size={20} />
+          Save Transaction
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SAVINGS SCREEN
+// ═══════════════════════════════════════════════════════════════
+function SavingsScreen({ state, savingsTxs, onUpdateGoal, onAddToSavings, onWithdraw, onNavigate }) {
+  const [editingGoal, setEditingGoal] = useState(false)
+  const [goalValue, setGoalValue] = useState(String(state.savingsGoal))
+  const goalPercent = state.savingsGoal > 0 ? Math.min(100, Math.round((state.savings / state.savingsGoal) * 100)) : 0
+
+  const savingsGrowth = useMemo(() => {
+    if (savingsTxs.length === 0) return 0
+    const totalSaved = savingsTxs.reduce((s, t) => s + t.amount, 0)
+    return totalSaved > 0 ? '+100%' : '0%'
+  }, [savingsTxs])
+
+  const handleSaveGoal = () => {
+    const val = Number(goalValue)
+    if (val > 0) {
+      onUpdateGoal(val)
+      setEditingGoal(false)
+    }
+  }
+
+  return (
+    <div className="screen">
+      <div className="page-header">
+        <h1 className="page-title">Savings</h1>
+      </div>
+
+      {/* Main Savings Card */}
+      <div className="savings-main-card">
+        <div className="savings-icon-big">
+          <PiggyBank />
+        </div>
+        <div className="savings-info">
+          <div className="savings-label">Total Savings</div>
+          <div className="savings-amount-row">
+            <div className="savings-amount">₹{formatAmount(state.savings)}</div>
+            {state.savings > 0 && (
+              <span className="savings-change">{savingsGrowth}</span>
+            )}
+          </div>
+          <div className="savings-message">
+            {state.savings > 0 ? 'Good job! Keep saving 🌱' : 'Start saving today!'}
+          </div>
+        </div>
+      </div>
+
+      {/* Savings Goal */}
+      <div className="savings-goal-card">
+        <div className="goal-header">
+          <div className="goal-title">
+            <Target size={18} />
+            Savings Goal
+          </div>
+          <span className="goal-arrow"><ChevronRight /></span>
+        </div>
+
+        <div className="goal-progress-header">
+          <div className="goal-amounts">
+            ₹{formatAmount(state.savings)} / <span>₹{formatAmount(state.savingsGoal)}</span>
+          </div>
+          <div className="goal-percent">{goalPercent}%</div>
+        </div>
+
+        <div className="goal-progress-bar">
+          <div className="goal-progress-fill" style={{ width: `${goalPercent}%` }} />
+        </div>
+
+        <div className="goal-footer">
+          <div className="goal-message">
+            {goalPercent >= 100 ? 'Goal reached! 🎉' : goalPercent >= 50 ? "You're halfway there!" : 'Keep going!'}
+          </div>
+          {!editingGoal ? (
+            <button className="goal-edit-btn" onClick={() => setEditingGoal(true)}>Edit Goal</button>
+          ) : null}
+        </div>
+
+        {editingGoal && (
+          <div className="goal-input-wrap">
+            <input
+              className="goal-input"
+              type="number"
+              inputMode="decimal"
+              placeholder="Goal amount"
+              value={goalValue}
+              onChange={(e) => setGoalValue(e.target.value)}
+              autoFocus
+            />
+            <button className="goal-save-btn" onClick={handleSaveGoal}>Save</button>
+            <button className="goal-cancel-btn" onClick={() => setEditingGoal(false)}>Cancel</button>
+          </div>
+        )}
+      </div>
+
+      {/* Recent Savings */}
+      {savingsTxs.length > 0 && (
+        <div className="recent-savings-section">
+          <div className="recent-savings-title">Recent Savings</div>
+          <div className="tx-list">
+            {savingsTxs.slice(0, 5).map(tx => (
+              <TransactionItem key={tx.id} tx={tx} showDate />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Action Buttons */}
+      <div className="fab-container">
+        <button className="fab-btn" onClick={onAddToSavings}>
+          <Plus size={20} />
+          Add to Savings
+        </button>
+      </div>
+
+      {state.savings > 0 && (
+        <div className="fab-container" style={{ paddingTop: 0 }}>
+          <button
+            className="fab-btn"
+            style={{ background: 'var(--surface)', color: 'var(--accent)', border: '1.5px solid var(--accent)', boxShadow: 'none' }}
+            onClick={onWithdraw}
+          >
+            <ArrowDownToLine size={20} />
+            Withdraw from Savings
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════
+// LOANS SCREEN
+// ═══════════════════════════════════════════════════════════════
+function LoansScreen({ loans, onRepaid, onAddLoan, onNavigate }) {
+  return (
+    <div className="screen">
+      <div className="page-header">
+        <div className="page-header-left">
+          <button className="back-btn" onClick={() => onNavigate('more')}>
+            <ArrowLeft size={22} />
+          </button>
+          <h1 className="page-title">Loans</h1>
+        </div>
+      </div>
+
+      {loans.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-state-icon">
+            <Landmark />
+          </div>
+          <div className="empty-state-title">No active loans</div>
+          <div className="empty-state-sub">You're all clear! 🎉</div>
+        </div>
+      ) : (
+        <div className="loans-list-page">
+          {loans.map((loan) => (
+            <div className="loan-item" key={loan.id}>
+              <div className="loan-avatar">{getInitial(loan.name)}</div>
+              <div className="loan-info">
+                <div className="loan-name">{loan.name}</div>
+                <div className="loan-date">{formatDate(loan.date)}</div>
+              </div>
+              <div className="loan-amount">₹{formatAmount(loan.amount)}</div>
+              <button
+                className="loan-repaid-btn"
+                onClick={() => onRepaid(loan.id)}
+              >
+                Repaid
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="fab-container">
+        <button className="fab-btn" onClick={onAddLoan}>
+          <Plus size={20} />
+          Add a Loan
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MORE SCREEN
+// ═══════════════════════════════════════════════════════════════
+function MoreScreen({ onNavigate, onExport, onInstallApp, isInstalled }) {
+  return (
+    <div className="screen">
+      <div className="page-header">
+        <h1 className="page-title">More</h1>
+      </div>
+
+      {/* Profile Card */}
+      <div className="profile-card">
+        <div className="profile-avatar">AL</div>
+        <div className="profile-info">
+          <div className="profile-name">Ashitosh</div>
+          <div className="profile-sub">Personal finance manager</div>
+        </div>
+        <span className="profile-arrow"><ChevronRight /></span>
+      </div>
+
+      {/* App Shortcut / Install Card */}
+      <div className="app-install-card" onClick={onInstallApp}>
+        <img src="/apple-touch-icon.png" alt="Expense Tracker" className="app-install-icon" />
+        <div className="app-install-info">
+          <div className="app-install-title">Download App Shortcut</div>
+          <div className="app-install-desc">
+            {isInstalled ? 'Installed with custom wallet icon' : 'Add to home screen with wallet icon'}
+          </div>
+        </div>
+        <span className={`app-install-badge ${isInstalled ? 'installed' : ''}`}>
+          {isInstalled ? 'Installed' : 'Install'}
+        </span>
+      </div>
+
+      {/* Menu Items */}
+      <div className="menu-list">
+        <div className="menu-card">
+          <button className="menu-item" onClick={onInstallApp}>
+            <span className="menu-item-icon"><Smartphone /></span>
+            <span className="menu-item-text">App Shortcut & Icon</span>
+            <span className="menu-item-arrow"><ChevronRight /></span>
+          </button>
+          <button className="menu-item" onClick={() => onNavigate('loans')}>
+            <span className="menu-item-icon"><Landmark /></span>
+            <span className="menu-item-text">Loans</span>
+            <span className="menu-item-arrow"><ChevronRight /></span>
+          </button>
+          <button className="menu-item" onClick={() => onNavigate('transactions')}>
+            <span className="menu-item-icon"><Tag /></span>
+            <span className="menu-item-text">Categories</span>
+            <span className="menu-item-arrow"><ChevronRight /></span>
+          </button>
+          <button className="menu-item" onClick={onExport}>
+            <span className="menu-item-icon"><Download /></span>
+            <span className="menu-item-text">Export Data</span>
+            <span className="menu-item-arrow"><ChevronRight /></span>
+          </button>
+          <button className="menu-item">
+            <span className="menu-item-icon"><Settings /></span>
+            <span className="menu-item-text">Settings</span>
+            <span className="menu-item-arrow"><ChevronRight /></span>
+          </button>
+          <button className="menu-item">
+            <span className="menu-item-icon"><HelpCircle /></span>
+            <span className="menu-item-text">Help & Support</span>
+            <span className="menu-item-arrow"><ChevronRight /></span>
+          </button>
+          <button className="menu-item">
+            <span className="menu-item-icon"><Info /></span>
+            <span className="menu-item-text">About</span>
+            <span className="menu-item-arrow"><ChevronRight /></span>
+          </button>
+        </div>
+      </div>
+
+      {/* Sign Out */}
+      <div className="signout-section">
+        <div className="signout-card">
+          <button className="menu-item danger">
+            <span className="menu-item-icon"><LogOut /></span>
+            <span className="menu-item-text">Sign Out</span>
+            <span className="menu-item-arrow"><ChevronRight /></span>
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -521,7 +1350,10 @@ function AddSheet({ onSubmit, onClose }) {
   return (
     <div className="bottom-sheet active">
       <div className="sheet-handle" />
-      <div className="sheet-title">💰 Add Amount</div>
+      <div className="sheet-title">
+        <Wallet size={24} />
+        Add Amount
+      </div>
       <form onSubmit={handleSubmit}>
         <div className="form-group">
           <label className="form-label" htmlFor="add-amount">Amount (₹)</label>
@@ -535,7 +1367,7 @@ function AddSheet({ onSubmit, onClose }) {
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
           />
-          {errors.amount && <div className="form-error">⚠ {errors.amount}</div>}
+          {errors.amount && <div className="form-error"><AlertCircle size={14} /> {errors.amount}</div>}
         </div>
         <div className="form-group">
           <label className="form-label" htmlFor="add-from">From (person's name)</label>
@@ -547,9 +1379,9 @@ function AddSheet({ onSubmit, onClose }) {
             value={from}
             onChange={(e) => setFrom(e.target.value)}
           />
-          {errors.from && <div className="form-error">⚠ {errors.from}</div>}
+          {errors.from && <div className="form-error"><AlertCircle size={14} /> {errors.from}</div>}
         </div>
-        <button className="btn-submit green" type="submit">
+        <button className="btn-submit indigo" type="submit">
           Add ₹{amount && Number(amount) > 0 ? formatAmount(Number(amount)) : '0'}
         </button>
       </form>
@@ -594,7 +1426,10 @@ function SpentSheet({ onSubmit, onClose }) {
   return (
     <div className="bottom-sheet active">
       <div className="sheet-handle" />
-      <div className="sheet-title">💸 Record Spending</div>
+      <div className="sheet-title">
+        <Receipt size={24} />
+        Record Spending
+      </div>
       <form onSubmit={handleSubmit}>
         <div className="form-group">
           <label className="form-label" htmlFor="spent-amount">Amount (₹)</label>
@@ -608,7 +1443,7 @@ function SpentSheet({ onSubmit, onClose }) {
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
           />
-          {errors.amount && <div className="form-error">⚠ {errors.amount}</div>}
+          {errors.amount && <div className="form-error"><AlertCircle size={14} /> {errors.amount}</div>}
         </div>
         <div className="form-group">
           <label className="form-label" htmlFor="spent-category">Category</label>
@@ -634,7 +1469,7 @@ function SpentSheet({ onSubmit, onClose }) {
               value={otherText}
               onChange={(e) => setOtherText(e.target.value)}
             />
-            {errors.other && <div className="form-error">⚠ {errors.other}</div>}
+            {errors.other && <div className="form-error"><AlertCircle size={14} /> {errors.other}</div>}
           </div>
         )}
         <button className="btn-submit red" type="submit">
@@ -674,7 +1509,10 @@ function WithdrawSheet({ maxAmount, onSubmit, onClose }) {
   return (
     <div className="bottom-sheet active">
       <div className="sheet-handle" />
-      <div className="sheet-title">🏦 Withdraw from Savings</div>
+      <div className="sheet-title">
+        <ArrowDownToLine size={24} />
+        Withdraw from Savings
+      </div>
       <form onSubmit={handleSubmit}>
         <div className="form-group">
           <label className="form-label" htmlFor="withdraw-amount">
@@ -690,12 +1528,183 @@ function WithdrawSheet({ maxAmount, onSubmit, onClose }) {
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
           />
-          {errors.amount && <div className="form-error">⚠ {errors.amount}</div>}
+          {errors.amount && <div className="form-error"><AlertCircle size={14} /> {errors.amount}</div>}
         </div>
-        <button className="btn-submit blue" type="submit">
+        <button className="btn-submit indigo" type="submit">
           Withdraw ₹{amount && Number(amount) > 0 ? formatAmount(Number(amount)) : '0'}
         </button>
       </form>
     </div>
   )
 }
+
+// ═══════════════════════════════════════════════════════════════
+// ADD TO SAVINGS BOTTOM SHEET
+// ═══════════════════════════════════════════════════════════════
+function AddSavingsSheet({ maxAmount, onSubmit, onClose }) {
+  const [amount, setAmount] = useState('')
+  const [errors, setErrors] = useState({})
+  const amountRef = useRef(null)
+
+  useEffect(() => {
+    setTimeout(() => amountRef.current?.focus(), 350)
+  }, [])
+
+  const validate = () => {
+    const e = {}
+    const amt = Number(amount)
+    if (!amount || isNaN(amt) || amt <= 0) e.amount = 'Enter a valid amount greater than 0'
+    else if (amt > maxAmount) e.amount = `Maximum: ₹${formatAmount(maxAmount)} (your current balance)`
+    setErrors(e)
+    return Object.keys(e).length === 0
+  }
+
+  const handleSubmit = (ev) => {
+    ev.preventDefault()
+    if (validate()) onSubmit({ amount })
+  }
+
+  return (
+    <div className="bottom-sheet active">
+      <div className="sheet-handle" />
+      <div className="sheet-title">
+        <PiggyBank size={24} />
+        Add to Savings
+      </div>
+      <form onSubmit={handleSubmit}>
+        <div className="add-savings-info">
+          <Wallet size={16} />
+          Available balance: ₹{formatAmount(maxAmount)}
+        </div>
+        <div className="form-group">
+          <label className="form-label" htmlFor="savings-amount">Amount (₹)</label>
+          <input
+            ref={amountRef}
+            id="savings-amount"
+            className={`form-input ${errors.amount ? 'error' : ''}`}
+            type="number"
+            inputMode="decimal"
+            placeholder="e.g. 200"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
+          {errors.amount && <div className="form-error"><AlertCircle size={14} /> {errors.amount}</div>}
+        </div>
+        <button className="btn-submit indigo" type="submit">
+          Save ₹{amount && Number(amount) > 0 ? formatAmount(Number(amount)) : '0'}
+        </button>
+      </form>
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EXPORT BOTTOM SHEET
+// ═══════════════════════════════════════════════════════════════
+function ExportSheet({ onExportCSV, onExportJSON, onClose }) {
+  return (
+    <div className="bottom-sheet active">
+      <div className="sheet-handle" />
+      <div className="sheet-title">
+        <Download size={24} />
+        Export Data
+      </div>
+      <div className="export-options">
+        <button className="export-option-btn" onClick={onExportCSV}>
+          <span className="export-option-icon"><FileText /></span>
+          <span className="export-option-text">
+            <div className="export-option-title">Export as CSV</div>
+            <div className="export-option-sub">Spreadsheet compatible format</div>
+          </span>
+        </button>
+        <button className="export-option-btn" onClick={onExportJSON}>
+          <span className="export-option-icon"><FileJson /></span>
+          <span className="export-option-text">
+            <div className="export-option-title">Export as JSON</div>
+            <div className="export-option-sub">Raw data with full details</div>
+          </span>
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════
+// INSTALL / SHORTCUT BOTTOM SHEET
+// ═══════════════════════════════════════════════════════════════
+function InstallAppSheet({ installPrompt, isInstalled, onClose, onInstallSuccess }) {
+  const [installing, setInstalling] = useState(false)
+
+  const handleInstallClick = async () => {
+    if (installPrompt) {
+      setInstalling(true)
+      try {
+        installPrompt.prompt()
+        const choiceResult = await installPrompt.userChoice
+        if (choiceResult && choiceResult.outcome === 'accepted') {
+          onInstallSuccess()
+        }
+      } catch (err) {
+        console.error('Install prompt error:', err)
+      } finally {
+        setInstalling(false)
+        onClose()
+      }
+    }
+  }
+
+  return (
+    <div className="bottom-sheet active">
+      <div className="sheet-handle" />
+      <div className="sheet-title">
+        <Smartphone size={24} />
+        App Shortcut & Icon
+      </div>
+
+      <div className="install-sheet-content">
+        <div className="install-app-preview">
+          <img src="/apple-touch-icon.png" alt="Wallet FIX App Icon" className="install-preview-img" />
+          <div className="install-preview-name">Wallet FIX</div>
+          <div className="install-preview-tag">Web Application</div>
+        </div>
+
+        <p className="install-sheet-desc">
+          Add Wallet FIX to your Home screen or desktop. It downloads as a standalone shortcut displaying this custom 3D wallet application icon!
+        </p>
+
+        {installPrompt ? (
+          <button className="btn-submit indigo" onClick={handleInstallClick} disabled={installing} style={{ marginBottom: '16px' }}>
+            <Download size={18} style={{ marginRight: '8px', verticalAlign: 'middle' }} />
+            {installing ? 'Installing...' : 'Add Shortcut to Device'}
+          </button>
+        ) : isInstalled ? (
+          <div className="install-info-box success" style={{ marginBottom: '16px' }}>
+            ✓ Application shortcut is already active on this device!
+          </div>
+        ) : (
+          <div className="install-instructions">
+            <div className="install-step">
+              <span className="step-num">1</span>
+              <div>
+                <strong>Safari / iOS:</strong> Tap the <strong>Share</strong> button (box with arrow) at the bottom, scroll down and tap <strong>"Add to Home Screen"</strong>.
+              </div>
+            </div>
+            <div className="install-step">
+              <span className="step-num">2</span>
+              <div>
+                <strong>Chrome / Android:</strong> Tap the <strong>three dots menu (⋮)</strong> and tap <strong>"Install app"</strong> or <strong>"Add to Home screen"</strong>.
+              </div>
+            </div>
+            <div className="install-step">
+              <span className="step-num">3</span>
+              <div>
+                <strong>Desktop:</strong> Look for the <strong>Install icon</strong> in your browser's address bar to install as a desktop shortcut.
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
