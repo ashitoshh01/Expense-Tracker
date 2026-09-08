@@ -149,6 +149,64 @@ body {
   border: 1px solid rgba(99, 102, 241, 0.25);
 }
 
+.mobile-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cloud-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.cloud-badge.synced {
+  color: var(--green);
+  border-color: rgba(34, 197, 94, 0.3);
+  background: var(--green-bg);
+}
+
+.cloud-badge.saving {
+  color: var(--accent);
+  border-color: rgba(99, 102, 241, 0.3);
+  background: var(--accent-light);
+}
+
+.cloud-badge.connecting {
+  color: var(--orange);
+  border-color: rgba(245, 158, 11, 0.3);
+  background: var(--orange-bg);
+}
+
+.cloud-badge.error {
+  color: var(--red);
+  border-color: rgba(239, 68, 68, 0.3);
+  background: var(--red-bg);
+}
+
+.cloud-badge:active {
+  transform: scale(0.92);
+}
+
+.spin-icon {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
 .header-avatar {
   width: 40px;
   height: 40px;
@@ -1516,6 +1574,110 @@ body {
 .profile-arrow svg {
   width: 20px;
   height: 20px;
+}
+
+/* ===== DATABASE STATUS CARD ===== */
+.database-status-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px 18px;
+  margin: 0 20px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: var(--shadow-sm);
+  gap: 12px;
+}
+
+.database-status-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.database-icon-wrap {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: rgba(99, 102, 241, 0.1);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.database-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.database-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.database-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.database-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  display: inline-block;
+}
+
+.database-dot.synced {
+  background: var(--green);
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+}
+
+.database-dot.saving {
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(99, 102, 241, 0.6);
+}
+
+.database-dot.connecting {
+  background: var(--orange);
+}
+
+.database-dot.error {
+  background: var(--red);
+}
+
+.database-sync-btn {
+  padding: 7px 14px;
+  border-radius: var(--radius-full);
+  border: 1.5px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.database-sync-btn:hover {
+  background: var(--accent-light);
+}
+
+.database-sync-btn:active {
+  transform: scale(0.96);
 }
 
 /* ===== MENU LIST ===== */

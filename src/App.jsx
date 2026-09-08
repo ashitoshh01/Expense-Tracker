@@ -6,8 +6,10 @@ import {
   Building2, Heart, GraduationCap, MoreHorizontal, Eye,
   Landmark, Download, Settings, HelpCircle, Info, LogOut,
   Tag, FileText, FileJson, AlertCircle, Target, ArrowDownToLine,
-  CircleDollarSign, CreditCard, X, Smartphone
+  CircleDollarSign, CreditCard, X, Smartphone,
+  Cloud, CloudCheck, CloudOff, Database, RefreshCw
 } from 'lucide-react'
+import { subscribeUserData, saveUserData } from './firebase'
 
 // ─── Helpers ────────────────────────────────────────────────
 const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7)
@@ -140,14 +142,78 @@ export default function App() {
     }
   }, [])
 
-  // ─── Sync state → localStorage ──────────────────────────────
+  // ─── Firebase Database Synchronization ───────────────────────
+  const [cloudStatus, setCloudStatus] = useState('connecting') // 'connecting' | 'synced' | 'saving' | 'error'
+
+  useEffect(() => {
+    const unsubscribe = subscribeUserData(
+      (cloudData) => {
+        if (cloudData) {
+          setState((prev) => {
+            const merged = {
+              balance: typeof cloudData.balance === 'number' ? cloudData.balance : prev.balance,
+              savings: typeof cloudData.savings === 'number' ? cloudData.savings : prev.savings,
+              loans: Array.isArray(cloudData.loans) ? cloudData.loans : prev.loans,
+              transactions: Array.isArray(cloudData.transactions) ? cloudData.transactions : prev.transactions,
+              savingsGoal: typeof cloudData.savingsGoal === 'number' ? cloudData.savingsGoal : prev.savingsGoal,
+              lastSalaryMonth: cloudData.lastSalaryMonth || prev.lastSalaryMonth,
+            }
+            Object.keys(merged).forEach((k) => persist(k, merged[k]))
+            return merged
+          })
+          setCloudStatus('synced')
+        } else {
+          // Document does not exist yet in Firestore: seed it with current local state
+          saveUserData(state)
+            .then(() => setCloudStatus('synced'))
+            .catch((err) => {
+              console.warn('Initial cloud seed failed:', err)
+              setCloudStatus('error')
+            })
+        }
+      },
+      (err) => {
+        console.warn('Firestore subscription error:', err)
+        setCloudStatus('error')
+      }
+    )
+    return () => unsubscribe()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // ─── Sync state → localStorage & Cloud Firestore ────────────
   const updateState = useCallback((updates) => {
     setState((prev) => {
       const next = { ...prev, ...updates }
       Object.keys(updates).forEach((k) => persist(k, next[k]))
+      setCloudStatus('saving')
+      saveUserData(next)
+        .then(() => setCloudStatus('synced'))
+        .catch((err) => {
+          console.warn('Firestore save error:', err)
+          setCloudStatus('error')
+        })
       return next
     })
   }, [])
+
+  const handleManualSync = async () => {
+    setCloudStatus('saving')
+    showToast('Syncing with Firebase Cloud Database...')
+    try {
+      await saveUserData(state)
+      setCloudStatus('synced')
+      showToast('Firebase Database synced successfully! ✓', 'income')
+    } catch (err) {
+      setCloudStatus('error')
+      const msg = String(err?.message || err)
+      if (msg.includes('PERMISSION_DENIED') || err?.code === 'permission-denied') {
+        showToast('Enable Cloud Firestore in Firebase Console (expense-b7fcb)', 'error')
+      } else {
+        showToast('Database sync error. Changes saved to local storage.', 'error')
+      }
+    }
+  }
 
   // ─── Auto salary logic ──────────────────────────────────────
   useEffect(() => {
@@ -436,6 +502,8 @@ export default function App() {
             onNavigate={navigate}
             onAddMoney={() => setModal('add')}
             onAddExpense={() => setModal('spent')}
+            cloudStatus={cloudStatus}
+            onCloudClick={handleManualSync}
           />
         )}
         {screen === 'transactions' && (
@@ -475,6 +543,8 @@ export default function App() {
             onExport={() => setModal('export')}
             onInstallApp={() => setModal('installApp')}
             isInstalled={isInstalled}
+            cloudStatus={cloudStatus}
+            onManualSync={handleManualSync}
           />
         )}
       </div>
@@ -586,7 +656,7 @@ function BottomNavigation({ active, onNavigate }) {
 // ═══════════════════════════════════════════════════════════════
 // HOME SCREEN
 // ═══════════════════════════════════════════════════════════════
-function HomeScreen({ state, monthlyEarned, monthlySpent, balanceChangePercent, onNavigate, onAddMoney, onAddExpense }) {
+function HomeScreen({ state, monthlyEarned, monthlySpent, balanceChangePercent, onNavigate, onAddMoney, onAddExpense, cloudStatus, onCloudClick }) {
   const recentTxs = state.transactions.slice(0, 5)
 
   return (
@@ -600,7 +670,20 @@ function HomeScreen({ state, monthlyEarned, monthlySpent, balanceChangePercent, 
             <span className="brand-name-fix">FIX</span>
           </div>
         </div>
-        <div className="header-avatar" onClick={() => onNavigate('more')} style={{ cursor: 'pointer' }}>AL</div>
+        <div className="mobile-header-right">
+          <button
+            className={`cloud-badge ${cloudStatus || 'synced'}`}
+            onClick={onCloudClick}
+            aria-label={`Database status: ${cloudStatus}`}
+            title={`Firebase Database: ${cloudStatus === 'synced' ? 'Synced with Cloud Firestore' : cloudStatus === 'saving' ? 'Saving to Firestore...' : cloudStatus === 'connecting' ? 'Connecting...' : 'Offline'}`}
+          >
+            {cloudStatus === 'synced' && <CloudCheck size={16} />}
+            {cloudStatus === 'saving' && <RefreshCw size={14} className="spin-icon" />}
+            {cloudStatus === 'connecting' && <Cloud size={16} />}
+            {cloudStatus === 'error' && <CloudOff size={16} />}
+          </button>
+          <div className="header-avatar" onClick={() => onNavigate('more')} style={{ cursor: 'pointer' }}>AL</div>
+        </div>
       </div>
 
       {/* Greeting */}
@@ -1234,7 +1317,7 @@ function LoansScreen({ loans, onRepaid, onAddLoan, onNavigate }) {
 // ═══════════════════════════════════════════════════════════════
 // MORE SCREEN
 // ═══════════════════════════════════════════════════════════════
-function MoreScreen({ onNavigate, onExport, onInstallApp, isInstalled }) {
+function MoreScreen({ onNavigate, onExport, onInstallApp, isInstalled, cloudStatus, onManualSync }) {
   return (
     <div className="screen">
       <div className="page-header">
@@ -1249,6 +1332,34 @@ function MoreScreen({ onNavigate, onExport, onInstallApp, isInstalled }) {
           <div className="profile-sub">Personal finance manager</div>
         </div>
         <span className="profile-arrow"><ChevronRight /></span>
+      </div>
+
+      {/* Cloud Database Status Card */}
+      <div className="database-status-card">
+        <div className="database-status-left">
+          <div className="database-icon-wrap">
+            <Database size={20} />
+          </div>
+          <div className="database-info">
+            <div className="database-title">Firebase Cloud Database</div>
+            <div className="database-sub">
+              <span className={`database-dot ${cloudStatus || 'synced'}`} />
+              {cloudStatus === 'synced' && 'Synced (expense-b7fcb)'}
+              {cloudStatus === 'saving' && 'Saving to Firestore...'}
+              {cloudStatus === 'connecting' && 'Connecting...'}
+              {cloudStatus === 'error' && 'Offline / Local cache active'}
+            </div>
+          </div>
+        </div>
+        <button
+          className="database-sync-btn"
+          onClick={onManualSync}
+          disabled={cloudStatus === 'saving'}
+          aria-label="Sync with Firebase"
+        >
+          <RefreshCw size={13} className={cloudStatus === 'saving' ? 'spin-icon' : ''} />
+          {cloudStatus === 'saving' ? 'Syncing...' : 'Sync'}
+        </button>
       </div>
 
       {/* App Shortcut / Install Card */}
