@@ -125,6 +125,8 @@ export default function App() {
   const [toast, setToast] = useState(null)
   const [confirm, setConfirm] = useState(null)
   const toastTimer = useRef(null)
+  const [dataLoaded, setDataLoaded] = useState(false) // blocks auto-salary until cloud data arrives
+  const dataLoadedRef = useRef(false) // ref to avoid stale closure issues
 
   // ─── PWA & Install Shortcut ──────────────────────────────────
   const [deferredPrompt, setDeferredPrompt] = useState(null)
@@ -153,7 +155,31 @@ export default function App() {
   // ─── Firebase Database Synchronization ───────────────────────
   const [cloudStatus, setCloudStatus] = useState('connecting') // 'connecting' | 'synced' | 'saving' | 'not_created' | 'error'
 
-  // Diagnostic check and initial cloud hydration
+  // Helper: merge cloud data into state and persist to localStorage
+  const hydrateFromCloud = useCallback((cloudData) => {
+    setState((prev) => {
+      const merged = {
+        balance: typeof cloudData.balance === 'number' ? cloudData.balance : prev.balance,
+        savings: typeof cloudData.savings === 'number' ? cloudData.savings : prev.savings,
+        loans: Array.isArray(cloudData.loans) ? cloudData.loans : prev.loans,
+        transactions: Array.isArray(cloudData.transactions) ? cloudData.transactions : prev.transactions,
+        savingsGoal: typeof cloudData.savingsGoal === 'number' ? cloudData.savingsGoal : prev.savingsGoal,
+        lastSalaryMonth: cloudData.lastSalaryMonth || prev.lastSalaryMonth,
+      }
+      Object.keys(merged).forEach((k) => persist(k, merged[k]))
+      return merged
+    })
+  }, [])
+
+  // Mark data as loaded (both ref and state)
+  const markDataLoaded = useCallback(() => {
+    if (!dataLoadedRef.current) {
+      dataLoadedRef.current = true
+      setDataLoaded(true)
+    }
+  }, [])
+
+  // Diagnostic check and cloud hydration (used for manual re-sync too)
   const verifyAndConnectCloud = useCallback(async () => {
     setCloudStatus('connecting')
     try {
@@ -164,60 +190,52 @@ export default function App() {
         } else {
           setCloudStatus('error')
         }
+        // Even if cloud failed, mark data loaded so app can work offline with localStorage
+        markDataLoaded()
         return
       }
 
       // Firestore database exists!
       if (check.exists && check.data) {
-        // Hydrate from server (overwriting local cache with live cloud data)
-        const cloudData = check.data
-        setState((prev) => {
-          const merged = {
-            balance: typeof cloudData.balance === 'number' ? cloudData.balance : prev.balance,
-            savings: typeof cloudData.savings === 'number' ? cloudData.savings : prev.savings,
-            loans: Array.isArray(cloudData.loans) ? cloudData.loans : prev.loans,
-            transactions: Array.isArray(cloudData.transactions) ? cloudData.transactions : prev.transactions,
-            savingsGoal: typeof cloudData.savingsGoal === 'number' ? cloudData.savingsGoal : prev.savingsGoal,
-            lastSalaryMonth: cloudData.lastSalaryMonth || prev.lastSalaryMonth,
-          }
-          Object.keys(merged).forEach((k) => persist(k, merged[k]))
-          return merged
-        })
+        hydrateFromCloud(check.data)
         setCloudStatus('synced')
       } else {
-        // Document not yet in Firestore: push current state to seed database
-        try {
-          await forcePushToCloud(state)
+        // Document doesn't exist in Firestore yet — only push if we already loaded
+        // (prevents pushing empty/default state on first load)
+        if (dataLoadedRef.current) {
+          try {
+            // Use functional setState to get current state for push
+            setState((currentState) => {
+              forcePushToCloud(currentState).catch(() => {})
+              return currentState
+            })
+            setCloudStatus('synced')
+          } catch (err) {
+            setCloudStatus('error')
+          }
+        } else {
+          // First load and no cloud data — just use localStorage defaults
           setCloudStatus('synced')
-        } catch (err) {
-          setCloudStatus('error')
         }
       }
+      markDataLoaded()
     } catch (err) {
       setCloudStatus('error')
+      markDataLoaded()
     }
-  }, [state])
+  }, [hydrateFromCloud, markDataLoaded])
 
+  // Initial mount: connect to Firebase, set up real-time listener
   useEffect(() => {
     verifyAndConnectCloud()
 
-    // Real-time listener
+    // Real-time listener for ongoing sync
     const unsubscribe = subscribeUserData(
       (cloudData, fromCache) => {
         if (cloudData && !fromCache) {
-          setState((prev) => {
-            const merged = {
-              balance: typeof cloudData.balance === 'number' ? cloudData.balance : prev.balance,
-              savings: typeof cloudData.savings === 'number' ? cloudData.savings : prev.savings,
-              loans: Array.isArray(cloudData.loans) ? cloudData.loans : prev.loans,
-              transactions: Array.isArray(cloudData.transactions) ? cloudData.transactions : prev.transactions,
-              savingsGoal: typeof cloudData.savingsGoal === 'number' ? cloudData.savingsGoal : prev.savingsGoal,
-              lastSalaryMonth: cloudData.lastSalaryMonth || prev.lastSalaryMonth,
-            }
-            Object.keys(merged).forEach((k) => persist(k, merged[k]))
-            return merged
-          })
+          hydrateFromCloud(cloudData)
           setCloudStatus('synced')
+          markDataLoaded()
         }
       },
       (err) => {
@@ -227,6 +245,8 @@ export default function App() {
         } else {
           setCloudStatus('error')
         }
+        // Even on error, mark loaded so app works offline
+        markDataLoaded()
       }
     )
     return () => unsubscribe()
@@ -329,38 +349,53 @@ export default function App() {
     })
   }
 
-  // ─── Auto salary logic ──────────────────────────────────────
+  // ─── Auto salary logic (ONLY runs after dataLoaded is true) ──
   useEffect(() => {
+    if (!dataLoaded) return // Wait for Firebase data to load first!
+
     const today = new Date()
     const cm = currentYearMonth()
-    if (today.getDate() >= 5 && state.lastSalaryMonth !== cm) {
-      const salaryTx = {
-        id: genId(),
-        type: 'salary',
-        category: 'Salary',
-        amount: 2000,
-        note: 'Salary',
-        date: todayStr(),
+    // Use functional setState to read the LATEST state after Firebase hydration
+    setState((currentState) => {
+      if (today.getDate() >= 5 && currentState.lastSalaryMonth !== cm) {
+        const salaryTx = {
+          id: genId(),
+          type: 'salary',
+          category: 'Salary',
+          amount: 2000,
+          note: 'Salary',
+          date: todayStr(),
+        }
+        const savingsTx = {
+          id: genId(),
+          type: 'auto_save',
+          category: 'Savings',
+          amount: 500,
+          note: 'Auto-saved from salary',
+          date: todayStr(),
+        }
+        const next = {
+          ...currentState,
+          balance: currentState.balance + 2000 - 500,
+          savings: currentState.savings + 500,
+          transactions: [savingsTx, salaryTx, ...currentState.transactions],
+          lastSalaryMonth: cm,
+        }
+        // Persist to localStorage and cloud
+        Object.keys(next).forEach((k) => {
+          if (KEYS[k]) persist(k, next[k])
+        })
+        setCloudStatus('saving')
+        saveUserData(next)
+          .then(() => setCloudStatus('synced'))
+          .catch(() => setCloudStatus('error'))
+        showToast('Salary ₹2,000 credited! ₹500 moved to savings.', 'salary')
+        return next
       }
-      const savingsTx = {
-        id: genId(),
-        type: 'auto_save',
-        category: 'Savings',
-        amount: 500,
-        note: 'Auto-saved from salary',
-        date: todayStr(),
-      }
-      const newTransactions = [savingsTx, salaryTx, ...state.transactions]
-      updateState({
-        balance: state.balance + 2000 - 500,
-        savings: state.savings + 500,
-        transactions: newTransactions,
-        lastSalaryMonth: cm,
-      })
-      showToast('Salary ₹2,000 credited! ₹500 moved to savings.', 'salary')
-    }
+      return currentState // No change
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [dataLoaded])
 
   // ─── Toast ──────────────────────────────────────────────────
   const showToast = (msg, variant = '') => {
@@ -601,6 +636,23 @@ export default function App() {
   // ─── Navigate ─────────────────────────────────────────────
   const navigate = (s) => {
     setScreen(s)
+  }
+
+  // ─── Loading Screen ─────────────────────────────────────────
+  if (!dataLoaded) {
+    return (
+      <div className="loading-screen">
+        <div className="loading-content">
+          <img src="/apple-touch-icon.png" alt="Wallet FIX" className="loading-logo" />
+          <div className="loading-brand">
+            <span className="brand-name-wallet">Wallet</span>
+            <span className="brand-name-fix">FIX</span>
+          </div>
+          <div className="loading-spinner"></div>
+          <p className="loading-text">Loading your data...</p>
+        </div>
+      </div>
+    )
   }
 
   // ─── Render ─────────────────────────────────────────────────
