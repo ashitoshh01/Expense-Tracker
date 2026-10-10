@@ -36,19 +36,28 @@ if (typeof window !== 'undefined') {
   }).catch(() => {})
 }
 
-// Document reference for user's expense tracker data
+// Collection for user's isolated expense tracker data
 export const DATA_COLLECTION = 'wallet_data'
-export const DATA_DOC = 'current_user'
-
-export const getUserDocRef = () => doc(db, DATA_COLLECTION, DATA_DOC)
+export const DEFAULT_LEGACY_DOC = 'current_user'
 
 /**
- * Diagnostic function to test live Firestore connection
+ * Get Firestore document reference for a specific user UID.
+ * Defaults to authenticated user or legacy fallback.
+ * @param {string} [userId]
+ */
+export const getUserDocRef = (userId) => {
+  const uid = userId || 'current_user'
+  return doc(db, DATA_COLLECTION, uid)
+}
+
+/**
+ * Diagnostic function to test live Firestore connection for a user
+ * @param {string} [userId]
  * @returns {Promise<{ ok: boolean, notCreated?: boolean, exists?: boolean, data?: any, error?: string, consoleUrl?: string }>}
  */
-export async function checkFirestoreConnection() {
+export async function checkFirestoreConnection(userId) {
   try {
-    const docRef = getUserDocRef()
+    const docRef = getUserDocRef(userId)
     const snap = await getDocFromServer(docRef)
     return {
       ok: true,
@@ -72,11 +81,12 @@ export async function checkFirestoreConnection() {
 }
 
 /**
- * Fetch fresh data directly from Cloud Firestore server (bypassing local cache)
+ * Fetch fresh data directly from Cloud Firestore server for a specific user
+ * @param {string} [userId]
  * @returns {Promise<Object|null>}
  */
-export async function fetchFreshFromServer() {
-  const docRef = getUserDocRef()
+export async function fetchFreshFromServer(userId) {
+  const docRef = getUserDocRef(userId)
   const snap = await getDocFromServer(docRef)
   if (snap.exists()) {
     return snap.data()
@@ -85,17 +95,17 @@ export async function fetchFreshFromServer() {
 }
 
 /**
- * Subscribe to real-time updates from Cloud Firestore
+ * Subscribe to real-time updates from Cloud Firestore for a specific user
+ * @param {string} userId
  * @param {Function} onData Callback when document is updated
  * @param {Function} onError Callback if an error occurs
  * @returns {Function} Unsubscribe function
  */
-export function subscribeUserData(onData, onError) {
-  const docRef = getUserDocRef()
+export function subscribeUserData(userId, onData, onError) {
+  const docRef = getUserDocRef(userId)
   return onSnapshot(
     docRef,
     (snapshot) => {
-      // Check if snapshot contains data from server or cache
       if (snapshot.exists()) {
         onData(snapshot.data(), snapshot.metadata.fromCache)
       } else {
@@ -110,12 +120,13 @@ export function subscribeUserData(onData, onError) {
 }
 
 /**
- * Force write to Cloud Firestore immediately (no debouncing)
+ * Force write to Cloud Firestore immediately for a specific user
+ * @param {string} userId
  * @param {Object} data State data to save
  * @returns {Promise<Object>}
  */
-export async function forcePushToCloud(data) {
-  const docRef = getUserDocRef()
+export async function forcePushToCloud(userId, data) {
+  const docRef = getUserDocRef(userId)
   const payload = {
     balance: Number(data.balance) || 0,
     savings: Number(data.savings) || 0,
@@ -123,31 +134,38 @@ export async function forcePushToCloud(data) {
     transactions: Array.isArray(data.transactions) ? data.transactions : [],
     savingsGoal: Number(data.savingsGoal) || 1000,
     lastSalaryMonth: data.lastSalaryMonth || '',
-    updatedAt: new Date().toISOString(),
+    settings: data.settings || {},
+    version: data.version || 2,
+    updatedAt: data.updatedAt || new Date().toISOString(),
   }
   await setDoc(docRef, payload, { merge: true })
   return payload
 }
 
-// Debounce timer for saving during normal user interactions
-let saveTimeout = null
+// Debounce timer map for saving
+const saveTimeouts = new Map()
 
 /**
  * Save user data to Cloud Firestore (debounced 300ms)
+ * @param {string} userId
  * @param {Object} data State data to save
- * @returns {Promise<void>}
+ * @returns {Promise<Object>}
  */
-export async function saveUserData(data) {
+export async function saveUserData(userId, data) {
   return new Promise((resolve, reject) => {
-    if (saveTimeout) clearTimeout(saveTimeout)
-    saveTimeout = setTimeout(async () => {
+    if (saveTimeouts.has(userId)) {
+      clearTimeout(saveTimeouts.get(userId))
+    }
+    const timer = setTimeout(async () => {
+      saveTimeouts.delete(userId)
       try {
-        const payload = await forcePushToCloud(data)
+        const payload = await forcePushToCloud(userId, data)
         resolve(payload)
       } catch (err) {
         console.error('Firestore save error:', err)
         reject(err)
       }
     }, 300)
+    saveTimeouts.set(userId, timer)
   })
 }
