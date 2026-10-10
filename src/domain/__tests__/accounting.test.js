@@ -306,4 +306,19 @@ describe('Domain: Critical Accounting Mutations', () => {
       expect(edited.transactions[0].amount).toBe(700)
     })
   })
+
+  describe('Pristine Zero State for New Users (Zero Hardcoded Defaults)', () => {
+    it('initializes raw empty state with 0 values across all metrics', () => {
+      const freshState = normalizeState({})
+      expect(freshState.balance).toBe(0)
+      expect(freshState.savings).toBe(0)
+      expect(freshState.savingsGoal).toBe(0)
+      expect(freshState.loans).toEqual([])
+      expect(freshState.transactions).toEqual([])
+      expect(freshState.settings.salaryAmount).toBe(0)
+      expect(freshState.settings.autoSaveAmount).toBe(0)
+      expect(freshState.settings.autoSaveEnabled).toBe(false)
+      expect(freshState.settings.recurringIncomes).toEqual([])
+    })
+  })
 })

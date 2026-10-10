@@ -1,6 +1,7 @@
+import { useState } from 'react'
 import {
   Plus, Minus, Wallet, TrendingUp, TrendingDown, Eye,
-  Cloud, CloudCheck, CloudOff, RefreshCw, Calendar, ChevronRight, ExternalLink
+  Cloud, CloudCheck, CloudOff, RefreshCw, Calendar, ChevronRight, ExternalLink, Edit2
 } from 'lucide-react'
 import { formatAmount } from '../../domain/money'
 import TransactionItem from './TransactionItem'
@@ -65,8 +66,19 @@ export default function HomeScreen({
   cloudStatus,
   onCloudClick,
   onRetryCloud,
+  authUser,
+  onUpdateName,
 }) {
+  const [editingName, setEditingName] = useState(false)
+  const [nameInput, setNameInput] = useState(authUser?.displayName || '')
   const recentTxs = state.transactions.slice(0, 5)
+
+  const greetingName = authUser?.displayName?.trim() || authUser?.email?.split('@')[0] || 'Friend'
+  const avatarInitials = authUser?.displayName
+    ? authUser.displayName.slice(0, 2).toUpperCase()
+    : authUser?.email
+    ? authUser.email.slice(0, 2).toUpperCase()
+    : 'U'
 
   return (
     <div className="screen">
@@ -107,7 +119,7 @@ export default function HomeScreen({
             {cloudStatus === 'error' && <CloudOff size={16} />}
           </button>
           <div className="header-avatar" onClick={() => onNavigate('more')} style={{ cursor: 'pointer' }}>
-            AL
+            {avatarInitials}
           </div>
         </div>
       </div>
@@ -152,7 +164,94 @@ export default function HomeScreen({
       {/* Greeting */}
       <div className="greeting-section">
         <div className="greeting-sub">{getGreeting()}</div>
-        <div className="greeting-name">Ashitosh 👋</div>
+        {editingName ? (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (nameInput.trim() && onUpdateName) {
+                onUpdateName(nameInput.trim())
+              }
+              setEditingName(false)
+            }}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '6px 0 8px' }}
+          >
+            <input
+              type="text"
+              autoFocus
+              value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
+              placeholder="Your name"
+              style={{
+                padding: '6px 12px',
+                borderRadius: 8,
+                border: '1.5px solid var(--accent)',
+                fontSize: '1.2rem',
+                fontWeight: 700,
+                background: 'var(--surface)',
+                color: 'var(--text-primary)',
+                outline: 'none',
+                maxWidth: 200,
+              }}
+            />
+            <button
+              type="submit"
+              style={{
+                padding: '6px 12px',
+                borderRadius: 8,
+                background: 'var(--accent)',
+                color: '#fff',
+                border: 'none',
+                fontWeight: 600,
+                fontSize: '0.85rem',
+                cursor: 'pointer',
+              }}
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditingName(false)}
+              style={{
+                padding: '6px 10px',
+                borderRadius: 8,
+                background: 'transparent',
+                border: '1px solid var(--border)',
+                color: 'var(--text-muted)',
+                fontSize: '0.85rem',
+                cursor: 'pointer',
+              }}
+            >
+              Cancel
+            </button>
+          </form>
+        ) : (
+          <div className="greeting-name" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span>{greetingName} 👋</span>
+            {onUpdateName && (
+              <button
+                type="button"
+                onClick={() => {
+                  setNameInput(authUser?.displayName || '')
+                  setEditingName(true)
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  padding: 4,
+                  cursor: 'pointer',
+                  color: 'var(--text-muted)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  opacity: 0.7,
+                }}
+                title="Edit name"
+                aria-label="Edit name"
+              >
+                <Edit2 size={16} />
+              </button>
+            )}
+          </div>
+        )}
         <div className="greeting-message">Let's make today a great financial day!</div>
       </div>
 

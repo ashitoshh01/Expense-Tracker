@@ -15,8 +15,8 @@ import {
 import { validateAndParseImport } from '../../services/exportImport'
 import { formatAmount } from '../../domain/money'
 
-export default function SettingsSheet({ settings, savingsGoal, onSave, onImportBackup, onClose }) {
-  const [goal, setGoal] = useState(String(savingsGoal || 1000))
+export default function SettingsSheet({ settings, savingsGoal, onSave, onImportBackup, onResetAllData, onClose }) {
+  const [goal, setGoal] = useState(String(savingsGoal ?? 0))
   const [recurringIncomes, setRecurringIncomes] = useState(() => {
     return Array.isArray(settings.recurringIncomes) ? [...settings.recurringIncomes] : []
   })
@@ -94,8 +94,8 @@ export default function SettingsSheet({ settings, savingsGoal, onSave, onImportB
   const handleSave = (e) => {
     e.preventDefault()
     const g = Number(goal)
-    if (isNaN(g) || g <= 0) {
-      setError('Savings goal must be greater than 0')
+    if (isNaN(g) || g < 0) {
+      setError('Savings goal must be a valid number (0 or higher)')
       return
     }
 
@@ -469,6 +469,34 @@ export default function SettingsSheet({ settings, savingsGoal, onSave, onImportB
             />
           </label>
         </div>
+
+        {onResetAllData && (
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4, color: '#EF4444' }}>
+              Reset Account Data
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 10px' }}>
+              Wipe all balances, savings, loans, and transaction history to ₹0 to start completely fresh.
+            </p>
+            <button
+              type="button"
+              onClick={onResetAllData}
+              style={{
+                width: '100%',
+                padding: '11px',
+                borderRadius: 10,
+                border: '1.5px solid #EF4444',
+                background: 'rgba(239, 68, 68, 0.08)',
+                color: '#EF4444',
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Reset All Financial Data to ₹0
+            </button>
+          </div>
+        )}
       </form>
     </div>
   )

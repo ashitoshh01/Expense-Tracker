@@ -6,7 +6,7 @@ import TransactionItem from './TransactionItem'
 
 export default function SavingsScreen({ state, savingsTxs, onUpdateGoal, onAddToSavings, onWithdraw, onNavigate }) {
   const [editingGoal, setEditingGoal] = useState(false)
-  const [goalValue, setGoalValue] = useState(String(state.savingsGoal))
+  const [goalValue, setGoalValue] = useState(String(state.savingsGoal || 0))
   const goalPercent = state.savingsGoal > 0 ? Math.min(100, Math.round((state.savings / state.savingsGoal) * 100)) : 0
 
   // Current & previous month breakdown for honest metrics
@@ -24,7 +24,7 @@ export default function SavingsScreen({ state, savingsTxs, onUpdateGoal, onAddTo
 
   const handleSaveGoal = () => {
     const val = Number(goalValue)
-    if (val > 0) {
+    if (!isNaN(val) && val >= 0) {
       onUpdateGoal(val)
       setEditingGoal(false)
     }
@@ -73,7 +73,7 @@ export default function SavingsScreen({ state, savingsTxs, onUpdateGoal, onAddTo
 
         <div className="goal-progress-header">
           <div className="goal-amounts">
-            ₹{formatAmount(state.savings)} / <span>₹{formatAmount(state.savingsGoal)}</span>
+            ₹{formatAmount(state.savings)} / <span>{state.savingsGoal > 0 ? `₹${formatAmount(state.savingsGoal)}` : '₹0 (No goal set)'}</span>
           </div>
           <div className="goal-percent">{goalPercent}%</div>
         </div>
@@ -84,7 +84,13 @@ export default function SavingsScreen({ state, savingsTxs, onUpdateGoal, onAddTo
 
         <div className="goal-footer">
           <div className="goal-message">
-            {goalPercent >= 100 ? 'Goal reached! 🎉' : goalPercent >= 50 ? "You're halfway there!" : 'Keep going!'}
+            {state.savingsGoal === 0
+              ? 'Set a savings goal to start tracking milestones! 🎯'
+              : goalPercent >= 100
+              ? 'Goal reached! 🎉'
+              : goalPercent >= 50
+              ? "You're halfway there!"
+              : 'Keep going!'}
           </div>
           {!editingGoal ? (
             <button className="goal-edit-btn" onClick={() => setEditingGoal(true)}>Edit Goal</button>

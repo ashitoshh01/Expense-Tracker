@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   Smartphone,
   Landmark,
@@ -12,6 +13,8 @@ import {
   RefreshCw,
   ExternalLink,
   LogIn,
+  RotateCcw,
+  Edit2,
 } from 'lucide-react'
 import { firebaseConfig } from '../../firebase'
 
@@ -28,11 +31,19 @@ export default function MoreScreen({
   onOpenAbout,
   onSignInGoogle,
   onSignOut,
+  onResetAllData,
+  onUpdateName,
 }) {
+  const [editingName, setEditingName] = useState(false)
+  const [nameInput, setNameInput] = useState(authUser?.displayName || '')
   const isAnonymous = !authUser || authUser.isAnonymous
-  const displayName = authUser?.displayName || (isAnonymous ? 'Local User' : 'Authenticated User')
+  const displayName = authUser?.displayName || (isAnonymous ? 'Local User' : authUser?.email ? authUser.email.split('@')[0] : 'User')
   const email = authUser?.email || (isAnonymous ? `Isolated Session (${authUser?.uid?.slice(0, 6) || 'local'}...)` : '')
-  const avatarText = authUser?.displayName ? authUser.displayName.slice(0, 2).toUpperCase() : 'AL'
+  const avatarText = authUser?.displayName
+    ? authUser.displayName.slice(0, 2).toUpperCase()
+    : authUser?.email
+    ? authUser.email.slice(0, 2).toUpperCase()
+    : 'U'
 
   return (
     <div className="screen">
@@ -45,7 +56,95 @@ export default function MoreScreen({
         <div className="profile-avatar">{avatarText}</div>
         <div className="profile-info">
           <div className="profile-name" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            {displayName}
+            {editingName ? (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  if (nameInput.trim() && onUpdateName) {
+                    onUpdateName(nameInput.trim())
+                  }
+                  setEditingName(false)
+                }}
+                onClick={(e) => e.stopPropagation()}
+                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                <input
+                  type="text"
+                  autoFocus
+                  value={nameInput}
+                  onChange={(e) => setNameInput(e.target.value)}
+                  placeholder="Enter name"
+                  style={{
+                    padding: '4px 8px',
+                    borderRadius: 6,
+                    border: '1.5px solid var(--accent)',
+                    fontSize: 14,
+                    fontWeight: 700,
+                    background: 'var(--surface)',
+                    color: 'var(--text-primary)',
+                    outline: 'none',
+                    maxWidth: 150,
+                  }}
+                />
+                <button
+                  type="submit"
+                  style={{
+                    padding: '4px 8px',
+                    borderRadius: 6,
+                    background: 'var(--accent)',
+                    color: '#fff',
+                    border: 'none',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingName(false)}
+                  style={{
+                    padding: '4px 8px',
+                    borderRadius: 6,
+                    background: 'transparent',
+                    border: '1px solid var(--border)',
+                    color: 'var(--text-muted)',
+                    fontSize: 12,
+                    cursor: 'pointer',
+                  }}
+                >
+                  ✕
+                </button>
+              </form>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>{displayName}</span>
+                {!isAnonymous && onUpdateName && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setNameInput(authUser?.displayName || '')
+                      setEditingName(true)
+                    }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      padding: 2,
+                      cursor: 'pointer',
+                      color: 'var(--text-muted)',
+                      display: 'flex',
+                      alignItems: 'center',
+                    }}
+                    title="Edit Name"
+                    aria-label="Edit Name"
+                  >
+                    <Edit2 size={13} />
+                  </button>
+                )}
+              </div>
+            )}
             {isAnonymous && (
               <span style={{ fontSize: 10, background: 'rgba(99, 102, 241, 0.1)', color: 'var(--accent)', padding: '2px 6px', borderRadius: 6, fontWeight: 700 }}>
                 Device Isolated
@@ -196,6 +295,21 @@ export default function MoreScreen({
             <span className="menu-item-text">About Wallet FIX</span>
             <span className="menu-item-arrow"><ChevronRight /></span>
           </button>
+          {onResetAllData && (
+            <button
+              className="menu-item"
+              onClick={onResetAllData}
+              style={{ color: '#EF4444' }}
+            >
+              <span className="menu-item-icon" style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444' }}>
+                <RotateCcw />
+              </span>
+              <span className="menu-item-text" style={{ color: '#EF4444', fontWeight: 600 }}>
+                Reset All Data to ₹0
+              </span>
+              <span className="menu-item-arrow"><ChevronRight /></span>
+            </button>
+          )}
         </div>
       </div>
 

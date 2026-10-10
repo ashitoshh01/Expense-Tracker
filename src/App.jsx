@@ -4,6 +4,7 @@ import {
   subscribeAuthState,
   signInWithGoogle,
   signOutUser,
+  updateUserProfileName,
 } from './services/auth'
 import { SyncManager } from './services/syncManager'
 import {
@@ -55,14 +56,33 @@ import HelpSheet from './components/modals/HelpSheet'
 import AboutSheet from './components/modals/AboutSheet'
 import EditTxSheet from './components/modals/EditTxSheet'
 
-// ─── Scoped State Persistence & Legacy Migration ────────────
+// ─── Scoped State Persistence ────────────────────────────────
 const getScopedStorageKey = (uid) => `et_${uid || 'anonymous_local'}_state`
 
 /**
- * Load state for a user, automatically migrating legacy keys if present.
- * Strictly preserves existing user financial data.
+ * Remove obsolete legacy storage keys so unauthenticated test/demo values never pollute new users.
+ */
+const cleanupLegacyStorage = () => {
+  try {
+    const legacyKeys = [
+      'et_balance',
+      'et_savings',
+      'et_loans',
+      'et_transactions',
+      'et_lastSalaryMonth',
+      'et_savingsGoal',
+    ]
+    legacyKeys.forEach((k) => localStorage.removeItem(k))
+  } catch {}
+}
+
+/**
+ * Load state for a user.
+ * Guarantees zero hardcoded values: any new account starts strictly with 0 values.
  */
 const loadInitialState = (uid) => {
+  cleanupLegacyStorage()
+  if (!uid) return normalizeState({})
   const scopedKey = getScopedStorageKey(uid)
   const existingScoped = localStorage.getItem(scopedKey)
 
@@ -74,35 +94,7 @@ const loadInitialState = (uid) => {
     }
   }
 
-  // Check for legacy localStorage data
-  const legacyBalance = Number(localStorage.getItem('et_balance'))
-  const legacySavings = Number(localStorage.getItem('et_savings'))
-  const legacyLoans = JSON.parse(localStorage.getItem('et_loans') || '[]')
-  const legacyTransactions = JSON.parse(localStorage.getItem('et_transactions') || '[]')
-  const legacyLastSalaryMonth = localStorage.getItem('et_lastSalaryMonth') || ''
-  const legacySavingsGoal = Number(localStorage.getItem('et_savingsGoal')) || 1000
-
-  if (
-    legacyTransactions.length > 0 ||
-    legacyBalance > 0 ||
-    legacySavings > 0 ||
-    legacyLoans.length > 0
-  ) {
-    const migrated = normalizeState({
-      balance: legacyBalance,
-      savings: legacySavings,
-      loans: legacyLoans,
-      transactions: legacyTransactions,
-      lastSalaryMonth: legacyLastSalaryMonth,
-      savingsGoal: legacySavingsGoal,
-      settings: { ...DEFAULT_SETTINGS },
-    })
-    try {
-      localStorage.setItem(scopedKey, JSON.stringify(migrated))
-    } catch {}
-    return migrated
-  }
-
+  // Brand new user: pristine state with 0 for all balances and empty lists
   return normalizeState({})
 }
 
@@ -458,6 +450,26 @@ export default function App() {
     })
   }
 
+  // Reset all financial data to ₹0
+  const handleResetAllData = () => {
+    setConfirm({
+      title: 'Reset All Financial Data to ₹0?',
+      message:
+        'This will reset your cash balance, savings, loans, and all transaction history to ₹0. Any existing values will be cleared so you can start completely fresh. Are you sure?',
+      variant: 'red',
+      onConfirm: () => {
+        const freshZeroState = normalizeState({})
+        mutateState(
+          () => freshZeroState,
+          'All financial data reset to ₹0! Fresh account ready.',
+          'income'
+        )
+        setConfirm(null)
+        setModal(null)
+      },
+    })
+  }
+
   // Export handlers
   const handleExportCSV = () => {
     try {
@@ -490,6 +502,22 @@ export default function App() {
       if (e?.code !== 'auth/popup-closed-by-user') {
         showToast(e.message || 'Google sign-in failed', 'error')
       }
+    }
+  }
+
+  // Update User Display Name
+  const handleUpdateUserName = async (newName) => {
+    try {
+      const updated = await updateUserProfileName(newName)
+      if (updated) {
+        setAuthUser({
+          ...updated,
+          displayName: newName.trim(),
+        })
+        showToast(`Name updated to "${newName.trim()}"! ✓`, 'income')
+      }
+    } catch (err) {
+      showToast(err.message || 'Failed to update name', 'error')
     }
   }
 
@@ -663,6 +691,8 @@ export default function App() {
             cloudStatus={cloudStatus}
             onCloudClick={handleManualSync}
             onRetryCloud={() => checkFirestoreConnection(authUser?.uid)}
+            authUser={authUser}
+            onUpdateName={handleUpdateUserName}
           />
         )}
         {screen === 'transactions' && (
@@ -717,6 +747,8 @@ export default function App() {
             onOpenAbout={() => setModal('about')}
             onSignInGoogle={handleSignInGoogle}
             onSignOut={handleSignOut}
+            onResetAllData={handleResetAllData}
+            onUpdateName={handleUpdateUserName}
           />
         )}
       </div>
@@ -786,6 +818,7 @@ export default function App() {
           savingsGoal={state.savingsGoal}
           onSave={handleSaveSettings}
           onImportBackup={handleImportBackup}
+          onResetAllData={handleResetAllData}
           onClose={() => setModal(null)}
         />
       )}

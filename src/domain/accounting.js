@@ -32,7 +32,7 @@ export function normalizeState(raw = {}) {
   const savings = Number.isFinite(numSavings) ? numSavings : 0
 
   const numGoal = Number(raw.savingsGoal)
-  const savingsGoal = Number.isFinite(numGoal) && numGoal > 0 ? numGoal : 1000
+  const savingsGoal = Number.isFinite(numGoal) && numGoal > 0 ? numGoal : 0
   const lastSalaryMonth = typeof raw.lastSalaryMonth === 'string' ? raw.lastSalaryMonth : ''
 
   // Normalize loans

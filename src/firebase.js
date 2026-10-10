@@ -132,7 +132,7 @@ export async function forcePushToCloud(userId, data) {
     savings: Number(data.savings) || 0,
     loans: Array.isArray(data.loans) ? data.loans : [],
     transactions: Array.isArray(data.transactions) ? data.transactions : [],
-    savingsGoal: Number(data.savingsGoal) || 1000,
+    savingsGoal: Number.isFinite(Number(data.savingsGoal)) ? Math.max(0, Number(data.savingsGoal)) : 0,
     lastSalaryMonth: data.lastSalaryMonth || '',
     settings: data.settings || {},
     version: data.version || 2,

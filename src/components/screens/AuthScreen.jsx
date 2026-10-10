@@ -7,6 +7,7 @@ import {
   AlertCircle,
   Loader2,
   ArrowRight,
+  User,
 } from 'lucide-react'
 import {
   signInWithEmail,
@@ -16,6 +17,7 @@ import {
 
 export default function AuthScreen({ onSignInSuccess }) {
   const [isSignUp, setIsSignUp] = useState(false)
+  const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -51,6 +53,11 @@ export default function AuthScreen({ onSignInSuccess }) {
     e.preventDefault()
     setError('')
 
+    if (isSignUp && !fullName.trim()) {
+      setError('Please enter your name')
+      return
+    }
+
     const cleanEmail = email.trim()
     if (!cleanEmail) {
       setError('Please enter your email address')
@@ -65,12 +72,15 @@ export default function AuthScreen({ onSignInSuccess }) {
     try {
       let user
       if (isSignUp) {
-        user = await signUpWithEmail(cleanEmail, password)
+        user = await signUpWithEmail(cleanEmail, password, fullName.trim())
       } else {
         user = await signInWithEmail(cleanEmail, password)
       }
       if (user && onSignInSuccess) {
-        onSignInSuccess(user)
+        onSignInSuccess({
+          ...user,
+          displayName: user.displayName || (isSignUp ? fullName.trim() : user.displayName),
+        })
       }
     } catch (err) {
       setError(formatAuthError(err))
@@ -185,6 +195,55 @@ export default function AuthScreen({ onSignInSuccess }) {
 
           {/* Email & Password Form */}
           <form onSubmit={handleEmailAuth}>
+            {isSignUp && (
+              <div style={{ marginBottom: 14 }}>
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: '0.82rem',
+                    fontWeight: 600,
+                    color: '#334155',
+                    marginBottom: 6,
+                  }}
+                >
+                  Your Full Name
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <User
+                    size={16}
+                    style={{
+                      position: 'absolute',
+                      left: 12,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      color: '#94A3B8',
+                    }}
+                  />
+                  <input
+                    type="text"
+                    required={isSignUp}
+                    placeholder="e.g. Ashitosh Lavhate"
+                    value={fullName}
+                    onChange={(e) => {
+                      setFullName(e.target.value)
+                      setError('')
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '11px 12px 11px 36px',
+                      borderRadius: 10,
+                      border: '1px solid #CBD5E1',
+                      background: '#FFFFFF',
+                      color: '#0F172A',
+                      fontSize: '0.9rem',
+                      outline: 'none',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+
             <div style={{ marginBottom: 14 }}>
               <label
                 style={{

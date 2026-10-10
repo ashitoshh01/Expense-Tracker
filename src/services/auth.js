@@ -14,6 +14,7 @@ import {
   signInWithPopup,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  updateProfile,
   linkWithPopup,
   GoogleAuthProvider,
   signOut as fbSignOut,
@@ -100,19 +101,45 @@ export async function signInWithEmail(email, password) {
 }
 
 /**
- * Create a new account with email and password.
+ * Create a new account with email, password, and user display name.
  * @param {string} email
  * @param {string} password
+ * @param {string} [displayName]
  * @returns {Promise<import('firebase/auth').User>}
  */
-export async function signUpWithEmail(email, password) {
+export async function signUpWithEmail(email, password, displayName = '') {
   try {
     const cred = await createUserWithEmailAndPassword(auth, email.trim(), password)
+    if (displayName && displayName.trim()) {
+      try {
+        await updateProfile(cred.user, { displayName: displayName.trim() })
+      } catch (profileErr) {
+        console.warn('Profile name update notice:', profileErr)
+      }
+    }
     return cred.user
   } catch (err) {
     console.error('Email sign-up error:', err)
     throw err
   }
+}
+
+/**
+ * Update authenticated user's display name.
+ * @param {string} displayName
+ * @returns {Promise<import('firebase/auth').User|null>}
+ */
+export async function updateUserProfileName(displayName) {
+  try {
+    if (auth.currentUser && displayName && displayName.trim()) {
+      await updateProfile(auth.currentUser, { displayName: displayName.trim() })
+      return auth.currentUser
+    }
+  } catch (err) {
+    console.error('Update display name error:', err)
+    throw err
+  }
+  return auth.currentUser
 }
 
 /**

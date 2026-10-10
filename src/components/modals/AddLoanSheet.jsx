@@ -109,7 +109,7 @@ export default function AddLoanSheet({ availableBalance, onSubmit, onClose }) {
             className={`form-input ${errors.amount ? 'error' : ''}`}
             type="number"
             inputMode="decimal"
-            placeholder="e.g. 1000"
+            placeholder="Enter amount"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
           />
