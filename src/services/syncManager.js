@@ -12,10 +12,11 @@ import { normalizeState, reconcileStates } from '../domain/accounting'
 import { forcePushToCloud, fetchFreshFromServer, subscribeUserData } from '../firebase'
 
 export class SyncManager {
-  constructor(userId, onStateUpdated, onStatusChanged) {
+  constructor(userId, onStateUpdated, onStatusChanged, getInitialState = null) {
     this.userId = userId
     this.onStateUpdated = onStateUpdated
     this.onStatusChanged = onStatusChanged
+    this.getInitialState = getInitialState
     this.pendingQueueKey = `et_pending_sync_${userId}`
     this.status = 'connecting'
     this.unsubscribeFirestore = null
@@ -35,6 +36,18 @@ export class SyncManager {
       this.isOnline = false
       this.setStatus('offline')
     })
+  }
+
+  classifyError(err) {
+    const msg = String(err?.message || err).toLowerCase()
+    const code = String(err?.code || '').toLowerCase()
+    if (code.includes('permission-denied') || msg.includes('permission') || msg.includes('insufficient permissions')) {
+      return 'permission_denied'
+    }
+    if (code.includes('not-found') || msg.includes('not found') || msg.includes('not-found')) {
+      return 'not_created'
+    }
+    return this.isOnline ? 'error' : 'offline'
   }
 
   setStatus(status) {
@@ -70,7 +83,7 @@ export class SyncManager {
   }
 
   /**
-   * Enqueue a local state mutation and attempt to sync to Firestore.
+   * Enqueue a local state mutation and attempt to sync to Firestore automatically.
    * @param {Object} nextState
    */
   async syncMutation(nextState) {
@@ -94,7 +107,7 @@ export class SyncManager {
       return normalized
     } catch (err) {
       console.warn('Sync failed, queued locally for retry:', err)
-      this.setStatus(this.isOnline ? 'error' : 'offline')
+      this.setStatus(this.classifyError(err))
       this.scheduleRetry(normalized)
       return normalized
     }
@@ -113,7 +126,7 @@ export class SyncManager {
   }
 
   /**
-   * Flush any queued unsynced mutations to Cloud Firestore.
+   * Flush any queued unsynced mutations to Cloud Firestore automatically.
    */
   async flushPendingSync(fallbackState = null) {
     const pending = this.getPendingQueue() || fallbackState
@@ -129,7 +142,7 @@ export class SyncManager {
       this.setStatus('synced')
     } catch (err) {
       console.warn('Flush pending sync failed:', err)
-      this.setStatus('error')
+      this.setStatus(this.classifyError(err))
     }
   }
 
@@ -158,7 +171,13 @@ export class SyncManager {
           if (pending) {
             this.flushPendingSync()
           } else {
-            this.setStatus('synced')
+            // Automatically push initial local state if available so cloud has user data immediately
+            const initial = typeof this.getInitialState === 'function' ? this.getInitialState() : null
+            if (initial && (Number(initial.balance) > 0 || initial.transactions?.length > 0 || initial.loans?.length > 0)) {
+              this.syncMutation(initial)
+            } else {
+              this.setStatus('synced')
+            }
           }
           return
         }
@@ -184,12 +203,7 @@ export class SyncManager {
       },
       (err) => {
         console.warn('Realtime listener error:', err)
-        const msg = String(err?.message || err)
-        if (msg.includes('PERMISSION_DENIED') || msg.includes('not-found')) {
-          this.setStatus('error')
-        } else {
-          this.setStatus('offline')
-        }
+        this.setStatus(this.classifyError(err))
         if (!initialHandled) {
           initialHandled = true
           if (onInitialLoadComplete) onInitialLoadComplete()

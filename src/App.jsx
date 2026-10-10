@@ -249,7 +249,8 @@ export default function App() {
       },
       (status) => {
         setCloudStatus(status)
-      }
+      },
+      () => loadInitialState(uid)
     )
     syncManagerRef.current = syncMgr
 
@@ -711,9 +712,6 @@ export default function App() {
             isInstalled={isInstalled}
             cloudStatus={cloudStatus}
             onManualSync={handleManualSync}
-            onPushToCloud={handlePushToCloud}
-            onFetchFresh={handleFetchFreshFromCloud}
-            onClearCache={handleClearLocalCache}
             onOpenSettings={() => setModal('settings')}
             onOpenHelp={() => setModal('help')}
             onOpenAbout={() => setModal('about')}

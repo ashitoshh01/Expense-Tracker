@@ -1843,8 +1843,10 @@ body {
 }
 
 .database-dot.not_created,
+.database-dot.permission_denied,
 .database-dot.error {
   background: var(--red);
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
 }
 
 .database-sync-btn {
@@ -1902,44 +1904,28 @@ body {
   width: fit-content;
 }
 
-.database-actions-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+.auto-sync-features {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
-  padding-top: 6px;
+  padding-top: 10px;
   border-top: 1px solid var(--border);
 }
 
-.db-action-btn {
+.auto-sync-badge {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 9px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--surface-alt);
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s ease;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.3;
 }
 
-.db-action-btn:hover {
-  background: var(--surface);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.db-action-btn.warning:hover {
-  border-color: var(--red);
-  color: var(--red);
-}
-
-.db-action-btn.warning {
-  grid-column: span 2;
+.auto-sync-check {
+  color: var(--green);
+  font-weight: 700;
+  font-size: 13px;
+  flex-shrink: 0;
 }
 
 /* ===== MENU LIST ===== */

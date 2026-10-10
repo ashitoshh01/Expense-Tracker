@@ -86,13 +86,15 @@ export default function HomeScreen({
             aria-label={`Database status: ${cloudStatus}`}
             title={`Firebase Database: ${
               cloudStatus === 'synced'
-                ? 'Synced with Cloud Firestore'
+                ? 'Auto-synced with Cloud Firestore'
                 : cloudStatus === 'saving'
-                ? 'Saving to Firestore...'
+                ? 'Auto-saving to Firestore...'
                 : cloudStatus === 'connecting'
-                ? 'Connecting...'
+                ? 'Connecting to cloud...'
                 : cloudStatus === 'offline'
                 ? 'Offline / Changes Queued'
+                : cloudStatus === 'permission_denied'
+                ? 'Firestore Rules: Action Required in Firebase Console'
                 : 'Connection Notice'
             }`}
           >
@@ -101,6 +103,7 @@ export default function HomeScreen({
             {cloudStatus === 'connecting' && <Cloud size={16} />}
             {cloudStatus === 'offline' && <CloudOff size={16} />}
             {cloudStatus === 'not_created' && <CloudOff size={16} />}
+            {cloudStatus === 'permission_denied' && <CloudOff size={16} />}
             {cloudStatus === 'error' && <CloudOff size={16} />}
           </button>
           <div className="header-avatar" onClick={() => onNavigate('more')} style={{ cursor: 'pointer' }}>

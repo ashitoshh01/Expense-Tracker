@@ -10,9 +10,6 @@ import {
   ChevronRight,
   Database,
   RefreshCw,
-  UploadCloud,
-  DownloadCloud,
-  Trash2,
   ExternalLink,
   LogIn,
 } from 'lucide-react'
@@ -26,9 +23,6 @@ export default function MoreScreen({
   isInstalled,
   cloudStatus,
   onManualSync,
-  onPushToCloud,
-  onFetchFresh,
-  onClearCache,
   onOpenSettings,
   onOpenHelp,
   onOpenAbout,
@@ -88,7 +82,7 @@ export default function MoreScreen({
         )}
       </div>
 
-      {/* Cloud Database Status Card */}
+      {/* Cloud Auto-Sync Card */}
       <div className="database-status-card">
         <div className="database-status-header">
           <div className="database-status-left">
@@ -96,15 +90,16 @@ export default function MoreScreen({
               <Database size={20} />
             </div>
             <div className="database-info">
-              <div className="database-title">Firebase Cloud Database</div>
+              <div className="database-title">Cloud Auto-Sync</div>
               <div className="database-sub">
                 <span className={`database-dot ${cloudStatus || 'synced'}`} />
-                {cloudStatus === 'synced' && 'Synced & Isolated (Active)'}
-                {cloudStatus === 'saving' && 'Saving to Firestore...'}
-                {cloudStatus === 'connecting' && 'Connecting to Firestore...'}
-                {cloudStatus === 'offline' && 'Offline / Changes Queued Locally'}
-                {cloudStatus === 'not_created' && 'Database Not Created in Console'}
-                {cloudStatus === 'error' && 'Network Issue / Local Cache Active'}
+                {cloudStatus === 'synced' && 'Real-time sync active'}
+                {cloudStatus === 'saving' && 'Auto-saving to cloud...'}
+                {cloudStatus === 'connecting' && 'Connecting to cloud...'}
+                {cloudStatus === 'offline' && 'Offline / Changes queued locally'}
+                {cloudStatus === 'permission_denied' && 'Firestore permissions required'}
+                {cloudStatus === 'not_created' && 'Database not created in console'}
+                {cloudStatus === 'error' && 'Syncing re-attempting...'}
               </div>
             </div>
           </div>
@@ -115,36 +110,37 @@ export default function MoreScreen({
             aria-label="Sync with Firebase"
           >
             <RefreshCw size={13} className={cloudStatus === 'saving' ? 'spin-icon' : ''} />
-            {cloudStatus === 'saving' ? 'Syncing...' : 'Sync'}
+            {cloudStatus === 'saving' ? 'Syncing...' : 'Sync Now'}
           </button>
         </div>
 
-        {cloudStatus === 'not_created' && (
+        {(cloudStatus === 'permission_denied' || cloudStatus === 'not_created') && (
           <div className="database-alert-box">
             <div className="database-alert-text">
-              Firestore has not been created yet in your project. Click below to create it in Firebase Console:
+              {cloudStatus === 'not_created'
+                ? 'Cloud Firestore database has not been created yet in your Firebase project.'
+                : 'Cloud Firestore Security Rules need to allow access for your account in Firebase Console.'}
             </div>
             <a
-              href={`https://console.firebase.google.com/project/${firebaseConfig.projectId || 'expense-b7fcb'}/firestore`}
+              href={`https://console.firebase.google.com/project/${firebaseConfig.projectId || 'expense-b7fcb'}/firestore/rules`}
               target="_blank"
               rel="noopener noreferrer"
               className="database-console-btn"
             >
-              Open Firebase Console <ExternalLink size={13} />
+              Open Firebase Rules <ExternalLink size={13} />
             </a>
           </div>
         )}
 
-        <div className="database-actions-grid">
-          <button className="db-action-btn" onClick={onPushToCloud} title="Directly upload all local data to Cloud Firestore">
-            <UploadCloud size={15} /> Push to Cloud
-          </button>
-          <button className="db-action-btn" onClick={onFetchFresh} title="Fetch directly from Firebase server bypassing cache">
-            <DownloadCloud size={15} /> Fetch from Cloud
-          </button>
-          <button className="db-action-btn warning" onClick={onClearCache} title="Clear browser cache to test fresh cloud load">
-            <Trash2 size={15} /> Clear Cache
-          </button>
+        <div className="auto-sync-features">
+          <div className="auto-sync-badge">
+            <span className="auto-sync-check">✓</span>
+            <span>All expenses, loans &amp; settings auto-save instantly</span>
+          </div>
+          <div className="auto-sync-badge">
+            <span className="auto-sync-check">✓</span>
+            <span>Offline-first: changes safe in local queue and auto-sync when online</span>
+          </div>
         </div>
       </div>
 
