@@ -72,7 +72,7 @@ describe('Section 3, 8 & 9: Money Precision, Migration & Backup Restore Suite', 
       expect(normalized.loans[0].amount).toBe(2000)
       expect(normalized.loans[0].outstanding).toBe(1500)
       expect(normalized.transactions).toHaveLength(2)
-      expect(normalized.settings.salaryAmount).toBe(2000)
+      expect(normalized.settings.salaryAmount).toBe(0)
     })
 
     it('is completely idempotent across repeated normalizations', () => {

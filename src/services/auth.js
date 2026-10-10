@@ -42,25 +42,15 @@ export function getCurrentUserId() {
 
 /**
  * Initialize authentication session.
- * If no user is signed in, seamlessly sign in anonymously so that
- * the user has an isolated UID immediately.
- * @returns {Promise<import('firebase/auth').User>}
+ * Resolves current user if already signed in, or null if unauthenticated.
+ * Does not force anonymous login, allowing the app to present the Auth screen.
+ * @returns {Promise<import('firebase/auth').User|null>}
  */
 export async function initializeAuth() {
   return new Promise((resolve) => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
       unsubscribe()
-      if (user) {
-        resolve(user)
-      } else {
-        try {
-          const cred = await signInAnonymously(auth)
-          resolve(cred.user)
-        } catch (err) {
-          console.warn('Anonymous sign-in failed, proceeding with local fallback:', err)
-          resolve(null)
-        }
-      }
+      resolve(user || null)
     })
   })
 }
@@ -74,6 +64,21 @@ export function subscribeAuthState(callback) {
   return onAuthStateChanged(auth, (user) => {
     callback(user)
   })
+}
+
+/**
+ * Sign in as a Guest (anonymous session).
+ * Creates an isolated private UID immediately without requiring credentials.
+ * @returns {Promise<import('firebase/auth').User>}
+ */
+export async function signInAsGuest() {
+  try {
+    const cred = await signInAnonymously(auth)
+    return cred.user
+  } catch (err) {
+    console.error('Guest sign-in error:', err)
+    throw err
+  }
 }
 
 /**
@@ -110,11 +115,10 @@ export async function signInWithGoogle() {
 
 /**
  * Sign out safely without deleting financial data.
- * After sign out, signs in anonymously to ensure a fresh clean isolated session.
- * @returns {Promise<import('firebase/auth').User>}
+ * Returns null to bring user back to the Auth screen.
+ * @returns {Promise<null>}
  */
 export async function signOutUser() {
   await fbSignOut(auth)
-  const cred = await signInAnonymously(auth)
-  return cred.user
+  return null
 }

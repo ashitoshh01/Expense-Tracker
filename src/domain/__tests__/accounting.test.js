@@ -265,6 +265,7 @@ describe('Domain: Critical Accounting Mutations', () => {
         balance: 1000,
         savings: 500,
         lastSalaryMonth: '2026-09',
+        settings: { salaryAmount: 2000, salaryDay: 5, autoSaveAmount: 500, autoSaveEnabled: true },
       })
       const testDate = new Date('2026-10-06T10:00:00Z')
       const firstRun = processSalaryAutomation(state, { now: testDate })

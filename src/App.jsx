@@ -21,6 +21,7 @@ import {
   repayLoan,
   deleteTransaction,
   editTransaction,
+  processRecurringIncomesAutomation,
   processSalaryAutomation,
   DEFAULT_SETTINGS,
 } from './domain/accounting'
@@ -32,6 +33,7 @@ import { exportToCSV, exportToJSON } from './services/exportImport'
 import { formatAmount } from './domain/money'
 
 // Screens
+import AuthScreen from './components/screens/AuthScreen'
 import HomeScreen from './components/screens/HomeScreen'
 import TransactionsScreen from './components/screens/TransactionsScreen'
 import AddTransactionScreen from './components/screens/AddTransactionScreen'
@@ -118,6 +120,7 @@ const persistScopedState = (uid, state) => {
 // ═══════════════════════════════════════════════════════════════
 export default function App() {
   const [authUser, setAuthUser] = useState(null)
+  const [authChecking, setAuthChecking] = useState(true)
   const [state, setState] = useState(() => loadInitialState('anonymous_local'))
   const [screen, setScreen] = useState('home')
   const [modal, setModal] = useState(null)
@@ -203,20 +206,26 @@ export default function App() {
     initializeAuth()
       .then((user) => {
         setAuthUser(user)
+        setAuthChecking(false)
+        if (!user) markDataLoaded()
       })
       .catch((err) => {
         console.warn('Auth initialization fallback:', err)
+        setAuthChecking(false)
         markDataLoaded()
       })
 
     const unsubscribeAuth = subscribeAuthState((user) => {
       setAuthUser(user)
+      setAuthChecking(false)
+      if (!user) markDataLoaded()
     })
 
-    // Timeout safety: unblock UI after 3.5s if Firestore is slow
+    // Timeout safety: unblock UI after 2.5s if Firestore is slow
     const safetyTimer = setTimeout(() => {
+      setAuthChecking(false)
       markDataLoaded()
-    }, 3500)
+    }, 2500)
 
     return () => {
       clearTimeout(safetyTimer)
@@ -226,7 +235,9 @@ export default function App() {
 
   // ─── Isolated Sync & Multi-Tab Synchronization per UID ─────
   useEffect(() => {
-    const uid = authUser?.uid || 'anonymous_local'
+    if (!authUser?.uid) return
+
+    const uid = authUser.uid
     const initial = loadInitialState(uid)
     setState(initial)
 
@@ -268,18 +279,19 @@ export default function App() {
     }
   }, [authUser?.uid, markDataLoaded])
 
-  // ─── Idempotent Monthly Salary Processing ───────────────────
+  // ─── Idempotent Monthly Recurring Incomes Processing ──────────
   useEffect(() => {
-    if (!dataLoaded) return
+    if (!dataLoaded || !authUser) return
 
     mutateState((currentState) => {
-      const result = processSalaryAutomation(currentState)
-      if (result.processed) {
+      const result = processRecurringIncomesAutomation(currentState)
+      if (result.processed && result.creditedSources?.length) {
+        const summary = result.creditedSources
+          .map((s) => `${s.name} (+₹${formatAmount(s.amount)})`)
+          .join(', ')
         showToast(
-          `Salary ₹${formatAmount(result.creditedAmount)} credited! ${
-            result.savedAmount > 0
-              ? `₹${formatAmount(result.savedAmount)} moved to savings.`
-              : ''
+          `Automated Credit: ${summary}${
+            result.savedAmount > 0 ? ` (₹${formatAmount(result.savedAmount)} moved to savings)` : ''
           }`,
           'salary'
         )
@@ -287,7 +299,7 @@ export default function App() {
       }
       return currentState
     })
-  }, [dataLoaded, mutateState, showToast])
+  }, [dataLoaded, authUser?.uid, mutateState, showToast])
 
   // ─── Action Handlers ────────────────────────────────────────
 
@@ -590,7 +602,34 @@ export default function App() {
     [state.transactions]
   )
 
-  // ─── Loading Screen ─────────────────────────────────────────
+  // ─── Loading / Auth Gate ────────────────────────────────────
+  if (authChecking) {
+    return (
+      <div className="loading-screen">
+        <div className="loading-content">
+          <img src="/apple-touch-icon.png" alt="Wallet FIX" className="loading-logo" />
+          <div className="loading-brand">
+            <span className="brand-name-wallet">Wallet</span>
+            <span className="brand-name-fix">FIX</span>
+          </div>
+          <div className="loading-spinner"></div>
+          <p className="loading-text">Initializing Wallet FIX...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!authUser) {
+    return (
+      <AuthScreen
+        onSignInSuccess={(user) => {
+          setAuthUser(user)
+          setAuthChecking(false)
+        }}
+      />
+    )
+  }
+
   if (!dataLoaded) {
     return (
       <div className="loading-screen">

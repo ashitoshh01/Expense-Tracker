@@ -10,10 +10,11 @@ import { toPaise, toRupees, validateAmount, addMoney, subMoney, genId } from './
 export const SCHEMA_VERSION = 2
 
 export const DEFAULT_SETTINGS = {
-  salaryAmount: 2000,
-  salaryDay: 5,
-  autoSaveAmount: 500,
-  autoSaveEnabled: true,
+  salaryAmount: 0,
+  salaryDay: 1,
+  autoSaveAmount: 0,
+  autoSaveEnabled: false,
+  recurringIncomes: [],
   currency: 'INR',
 }
 
@@ -87,10 +88,45 @@ export function normalizeState(raw = {}) {
     }
   })
 
+  // Normalize recurring income sources
+  const rawRecurring = Array.isArray(raw.settings?.recurringIncomes) ? raw.settings.recurringIncomes : []
+  const recurringIncomes = rawRecurring.map((inc) => ({
+    id: inc.id || genId(),
+    name: String(inc.name || 'Monthly Income').trim(),
+    amount: Number.isFinite(Number(inc.amount)) && Number(inc.amount) > 0 ? Number(inc.amount) : 0,
+    creditDay:
+      Number.isInteger(Number(inc.creditDay)) && Number(inc.creditDay) >= 1 && Number(inc.creditDay) <= 31
+        ? Number(inc.creditDay)
+        : 1,
+    autoSaveAmount:
+      Number.isFinite(Number(inc.autoSaveAmount)) && Number(inc.autoSaveAmount) >= 0
+        ? Number(inc.autoSaveAmount)
+        : 0,
+    category: inc.category || 'Salary',
+    enabled: inc.enabled !== false,
+  }))
+
+  const rawSalaryAmount = Number(raw.settings?.salaryAmount)
+  const salaryAmount = Number.isFinite(rawSalaryAmount) && rawSalaryAmount > 0 ? rawSalaryAmount : 0
+
+  const rawAutoSaveAmount = Number(raw.settings?.autoSaveAmount)
+  const autoSaveAmount = Number.isFinite(rawAutoSaveAmount) && rawAutoSaveAmount > 0 ? rawAutoSaveAmount : 0
+
+  const autoSaveEnabled = Boolean(raw.settings?.autoSaveEnabled)
+
   const settings = {
     ...DEFAULT_SETTINGS,
     ...(raw.settings || {}),
+    salaryAmount,
+    autoSaveAmount,
+    autoSaveEnabled,
+    recurringIncomes,
   }
+
+  const recurringIncomeHistory =
+    typeof raw.recurringIncomeHistory === 'object' && raw.recurringIncomeHistory !== null
+      ? { ...raw.recurringIncomeHistory }
+      : {}
 
   return {
     balance: balance,
@@ -99,6 +135,7 @@ export function normalizeState(raw = {}) {
     transactions,
     savingsGoal,
     lastSalaryMonth,
+    recurringIncomeHistory,
     settings,
     version: SCHEMA_VERSION,
     updatedAt: raw.updatedAt || new Date().toISOString(),
@@ -515,76 +552,257 @@ export function editTransaction(state, txId, updates) {
 }
 
 /**
- * Process Monthly Salary Automation idempotently.
- *
- * Rules:
- * 1. Checks if current date has reached configured salaryDay.
- * 2. Ensures salary is credited at most once per user per configured month (lastSalaryMonth check).
- * 3. Idempotent across app refreshes, multiple tabs, and delayed sync.
- * 4. Supports user-configured salary amount and auto-save amount.
+ * Add a new recurring income source.
  */
-export function processSalaryAutomation(state, { now = new Date(), force = false } = {}) {
-  const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+export function addRecurringIncome(state, { name, category = 'Salary', amount, creditDay = 1, autoSaveAmount = 0, enabled = true }) {
+  const amt = validateAmount(amount)
+  const asAmt = Number(autoSaveAmount) > 0 ? validateAmount(autoSaveAmount, true) : 0
+  const day = Math.max(1, Math.min(31, Math.round(Number(creditDay) || 1)))
 
-  if (!force) {
-    if (state.lastSalaryMonth === currentMonthKey) {
-      return { state, processed: false, reason: 'already_credited' }
-    }
-    const day = now.getDate()
-    const scheduledDay = state.settings?.salaryDay || DEFAULT_SETTINGS.salaryDay
-    if (day < scheduledDay) {
-      return { state, processed: false, reason: 'scheduled_date_not_reached' }
-    }
-  }
-
-  const salaryAmt = validateAmount(state.settings?.salaryAmount || DEFAULT_SETTINGS.salaryAmount)
-  const autoSaveEnabled = Boolean(state.settings?.autoSaveEnabled)
-  const configuredAutoSave = validateAmount(state.settings?.autoSaveAmount || DEFAULT_SETTINGS.autoSaveAmount, true)
-  const autoSaveAmt = autoSaveEnabled ? Math.min(salaryAmt, configuredAutoSave) : 0
-
-  const netCashIncrease = subMoney(salaryAmt, autoSaveAmt)
-  const todayStr = now.toISOString().split('T')[0]
-
-  const salaryTx = {
+  const newSource = {
     id: genId(),
-    type: 'salary',
-    category: 'Salary',
-    amount: salaryAmt,
-    note: 'Monthly Salary Credit',
-    date: todayStr,
+    name: String(name || '').trim() || 'Monthly Income',
+    category: category || 'Salary',
+    amount: amt,
+    creditDay: day,
+    autoSaveAmount: asAmt,
+    enabled: Boolean(enabled),
     createdAt: new Date().toISOString(),
   }
 
-  const newTransactions = [salaryTx]
+  const existing = Array.isArray(state.settings?.recurringIncomes) ? state.settings.recurringIncomes : []
 
-  if (autoSaveAmt > 0) {
-    const autoSaveTx = {
+  return {
+    ...state,
+    settings: {
+      ...state.settings,
+      recurringIncomes: [...existing, newSource],
+    },
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+/**
+ * Update an existing recurring income source.
+ */
+export function updateRecurringIncome(state, incomeId, updates) {
+  const existing = Array.isArray(state.settings?.recurringIncomes) ? state.settings.recurringIncomes : []
+  const nextSources = existing.map((src) => {
+    if (src.id !== incomeId) return src
+    const amt = updates.amount !== undefined ? validateAmount(updates.amount) : src.amount
+    const asAmt = updates.autoSaveAmount !== undefined ? validateAmount(updates.autoSaveAmount, true) : src.autoSaveAmount
+    const day =
+      updates.creditDay !== undefined
+        ? Math.max(1, Math.min(31, Math.round(Number(updates.creditDay) || 1)))
+        : src.creditDay
+    return {
+      ...src,
+      name: updates.name !== undefined ? String(updates.name).trim() || src.name : src.name,
+      category: updates.category !== undefined ? updates.category : src.category,
+      amount: amt,
+      creditDay: day,
+      autoSaveAmount: asAmt,
+      enabled: updates.enabled !== undefined ? Boolean(updates.enabled) : src.enabled,
+    }
+  })
+
+  return {
+    ...state,
+    settings: {
+      ...state.settings,
+      recurringIncomes: nextSources,
+    },
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+/**
+ * Delete a recurring income source.
+ */
+export function deleteRecurringIncome(state, incomeId) {
+  const existing = Array.isArray(state.settings?.recurringIncomes) ? state.settings.recurringIncomes : []
+  return {
+    ...state,
+    settings: {
+      ...state.settings,
+      recurringIncomes: existing.filter((src) => src.id !== incomeId),
+    },
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+/**
+ * Process Monthly Automated Incomes and Recurring Credits idempotently.
+ *
+ * Rules:
+ * 1. Checks all configured recurring income sources in state.settings.recurringIncomes.
+ * 2. Checks if current date >= configured creditDay (1 to 31).
+ * 3. Checks if each source has already been credited for the current month key ('YYYY-MM').
+ * 4. Adds net cash (amount - autoSaveAmount) to cash balance.
+ * 5. Adds autoSaveAmount to savings balance.
+ * 6. Records ledger transactions for the income credit and for the savings deposit.
+ * 7. Also processes legacy single salaryAmount if explicitly configured by the user (> 0).
+ * 8. Guarantees zero hardcoded dummy credits: if no sources are configured, no operations occur.
+ */
+export function processRecurringIncomesAutomation(state, { now = new Date(), force = false } = {}) {
+  const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  const todayStr = now.toISOString().split('T')[0]
+  const currentDay = now.getDate()
+
+  let nextBalance = state.balance
+  let nextSavings = state.savings
+  const newTransactions = []
+  const updatedHistory = { ...(state.recurringIncomeHistory || {}) }
+  const creditedSources = []
+
+  const sources = Array.isArray(state.settings?.recurringIncomes) ? state.settings.recurringIncomes : []
+
+  // 1. Process configured recurring income sources
+  for (const src of sources) {
+    if (!src.enabled) continue
+
+    const amt = Number(src.amount) || 0
+    if (amt <= 0) continue
+
+    const scheduledDay = Number(src.creditDay) || 1
+    const historyKey = `${src.id}_${currentMonthKey}`
+
+    if (!force) {
+      if (updatedHistory[historyKey]) {
+        continue // already credited this month
+      }
+      if (currentDay < scheduledDay) {
+        continue // credit day not yet reached
+      }
+    }
+
+    const autoSaveAmt = src.autoSaveAmount > 0 ? Math.min(amt, Number(src.autoSaveAmount)) : 0
+    const netCashIncrease = subMoney(amt, autoSaveAmt)
+
+    const incomeTx = {
       id: genId(),
-      type: 'savings_deposit',
-      category: 'Savings',
-      amount: autoSaveAmt,
-      note: 'Auto-saved from salary',
+      type: src.category === 'Salary' ? 'salary' : 'income',
+      category: src.category || 'Income',
+      amount: amt,
+      note: `${src.name || 'Monthly Income'} (Auto-Credit)`,
       date: todayStr,
       createdAt: new Date().toISOString(),
     }
-    newTransactions.unshift(autoSaveTx)
+    newTransactions.push(incomeTx)
+
+    if (autoSaveAmt > 0) {
+      const autoSaveTx = {
+        id: genId(),
+        type: 'savings_deposit',
+        category: 'Savings',
+        amount: autoSaveAmt,
+        note: `Auto-saved from ${src.name || 'Income'}`,
+        date: todayStr,
+        createdAt: new Date().toISOString(),
+      }
+      newTransactions.push(autoSaveTx)
+    }
+
+    nextBalance = addMoney(nextBalance, netCashIncrease)
+    nextSavings = addMoney(nextSavings, autoSaveAmt)
+    updatedHistory[historyKey] = true
+    creditedSources.push({
+      name: src.name || 'Income',
+      amount: amt,
+      saved: autoSaveAmt,
+    })
+  }
+
+  // 2. Process legacy single salary if configured and not covered by recurringIncomes
+  let legacyProcessed = false
+  let legacySkipReason = null
+  const legacySalaryAmt = Number(state.settings?.salaryAmount) || 0
+  if (legacySalaryAmt > 0 && (!sources.length || force)) {
+    const scheduledDay = state.settings?.salaryDay || 1
+    const alreadyCredited = state.lastSalaryMonth === currentMonthKey
+
+    if (!force) {
+      if (alreadyCredited) {
+        legacySkipReason = 'already_credited'
+      } else if (currentDay < scheduledDay) {
+        legacySkipReason = 'scheduled_date_not_reached'
+      }
+    }
+
+    if (force || (!alreadyCredited && currentDay >= scheduledDay)) {
+      const autoSaveEnabled = Boolean(state.settings?.autoSaveEnabled)
+      const configuredAutoSave = Number(state.settings?.autoSaveAmount) || 0
+      const autoSaveAmt = autoSaveEnabled ? Math.min(legacySalaryAmt, configuredAutoSave) : 0
+      const netCashIncrease = subMoney(legacySalaryAmt, autoSaveAmt)
+
+      const salaryTx = {
+        id: genId(),
+        type: 'salary',
+        category: 'Salary',
+        amount: legacySalaryAmt,
+        note: 'Monthly Salary Credit',
+        date: todayStr,
+        createdAt: new Date().toISOString(),
+      }
+      newTransactions.push(salaryTx)
+
+      if (autoSaveAmt > 0) {
+        const autoSaveTx = {
+          id: genId(),
+          type: 'savings_deposit',
+          category: 'Savings',
+          amount: autoSaveAmt,
+          note: 'Auto-saved from salary',
+          date: todayStr,
+          createdAt: new Date().toISOString(),
+        }
+        newTransactions.push(autoSaveTx)
+      }
+
+      nextBalance = addMoney(nextBalance, netCashIncrease)
+      nextSavings = addMoney(nextSavings, autoSaveAmt)
+      legacyProcessed = true
+      creditedSources.push({
+        name: 'Salary',
+        amount: legacySalaryAmt,
+        saved: autoSaveAmt,
+      })
+    }
+  }
+
+  if (newTransactions.length === 0) {
+    return {
+      state,
+      processed: false,
+      reason: legacySkipReason || 'no_pending_credits',
+      creditedSources: [],
+    }
   }
 
   const nextState = {
     ...state,
-    balance: addMoney(state.balance, netCashIncrease),
-    savings: addMoney(state.savings, autoSaveAmt),
+    balance: nextBalance,
+    savings: nextSavings,
     transactions: [...newTransactions, ...state.transactions],
-    lastSalaryMonth: currentMonthKey,
+    recurringIncomeHistory: updatedHistory,
+    lastSalaryMonth: legacyProcessed ? currentMonthKey : state.lastSalaryMonth,
     updatedAt: new Date().toISOString(),
   }
 
   return {
     state: nextState,
     processed: true,
-    creditedAmount: salaryAmt,
-    savedAmount: autoSaveAmt,
+    creditedSources,
+    creditedAmount: creditedSources.reduce((sum, s) => addMoney(sum, s.amount), 0),
+    savedAmount: creditedSources.reduce((sum, s) => addMoney(sum, s.saved), 0),
   }
+}
+
+/**
+ * Backward compatibility alias for processSalaryAutomation.
+ */
+export function processSalaryAutomation(state, options = {}) {
+  return processRecurringIncomesAutomation(state, options)
 }
 
 /**
@@ -683,10 +901,24 @@ export function reconcileStates(localState, remoteState) {
       ? { ...local.settings, ...remote.settings }
       : { ...remote.settings, ...local.settings }
 
+  // Merge recurring income sources by id
+  const localIncomeMap = new Map((local.settings?.recurringIncomes || []).map((i) => [i.id, i]))
+  for (const rInc of remote.settings?.recurringIncomes || []) {
+    if (!localIncomeMap.has(rInc.id)) {
+      localIncomeMap.set(rInc.id, rInc)
+    }
+  }
+  latestSettings.recurringIncomes = Array.from(localIncomeMap.values())
+
   const lastSalaryMonth =
     (local.lastSalaryMonth || '') > (remote.lastSalaryMonth || '')
       ? local.lastSalaryMonth
       : remote.lastSalaryMonth || local.lastSalaryMonth || ''
+
+  const recurringIncomeHistory = {
+    ...(remote.recurringIncomeHistory || {}),
+    ...(local.recurringIncomeHistory || {}),
+  }
 
   return {
     balance: nextBalance,
@@ -695,6 +927,7 @@ export function reconcileStates(localState, remoteState) {
     loans: Array.from(localLoanMap.values()),
     transactions: allTxs,
     lastSalaryMonth,
+    recurringIncomeHistory,
     settings: latestSettings,
     updatedAt: new Date().toISOString(),
   }
