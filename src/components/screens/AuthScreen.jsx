@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import {
-  Wallet,
   Mail,
   Lock,
   Eye,
@@ -8,13 +7,11 @@ import {
   AlertCircle,
   Loader2,
   ArrowRight,
-  User,
 } from 'lucide-react'
 import {
   signInWithEmail,
   signUpWithEmail,
   signInWithGoogle,
-  signInAsGuest,
 } from '../../services/auth'
 
 export default function AuthScreen({ onSignInSuccess }) {
@@ -23,7 +20,7 @@ export default function AuthScreen({ onSignInSuccess }) {
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
 
-  const [loading, setLoading] = useState(null) // 'email' | 'google' | 'guest' | null
+  const [loading, setLoading] = useState(null) // 'email' | 'google' | null
   const [error, setError] = useState('')
 
   // Map Firebase auth errors to simple user-friendly messages
@@ -45,7 +42,7 @@ export default function AuthScreen({ onSignInSuccess }) {
       return 'Please enter a valid email address.'
     }
     if (code === 'auth/operation-not-allowed') {
-      return 'Email/password sign-in is not enabled in Firebase Console. You can continue with Google or Guest mode.'
+      return 'Email/password sign-in is not enabled in Firebase Console. You can continue with Google.'
     }
     return err?.message || 'Authentication failed. Please try again.'
   }
@@ -99,21 +96,6 @@ export default function AuthScreen({ onSignInSuccess }) {
     }
   }
 
-  const handleGuestSignIn = async () => {
-    setError('')
-    setLoading('guest')
-    try {
-      const user = await signInAsGuest()
-      if (user && onSignInSuccess) {
-        onSignInSuccess(user)
-      }
-    } catch (err) {
-      setError(formatAuthError(err))
-    } finally {
-      setLoading(null)
-    }
-  }
-
   return (
     <div
       style={{
@@ -137,24 +119,21 @@ export default function AuthScreen({ onSignInSuccess }) {
           alignItems: 'center',
         }}
       >
-        {/* Simple Brand Header */}
+        {/* Official App Logo Header */}
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <div
+          <img
+            src="/apple-touch-icon.png"
+            alt="Wallet FIX Logo"
             style={{
-              width: 52,
-              height: 52,
-              borderRadius: 14,
-              background: '#0F172A',
-              color: '#FFFFFF',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
+              width: 68,
+              height: 68,
+              borderRadius: 18,
+              display: 'block',
               margin: '0 auto 12px',
-              boxShadow: '0 4px 12px rgba(15, 23, 42, 0.12)',
+              boxShadow: '0 8px 24px rgba(15, 23, 42, 0.12)',
+              objectFit: 'cover',
             }}
-          >
-            <Wallet size={26} strokeWidth={2.2} />
-          </div>
+          />
           <h1
             style={{
               fontSize: '1.5rem',
@@ -411,7 +390,6 @@ export default function AuthScreen({ onSignInSuccess }) {
               alignItems: 'center',
               justifyContent: 'center',
               gap: 10,
-              marginBottom: 10,
             }}
           >
             {loading === 'google' ? (
@@ -438,35 +416,6 @@ export default function AuthScreen({ onSignInSuccess }) {
             )}
             <span>Sign in with Google</span>
           </button>
-
-          {/* Continue as Guest Button */}
-          <button
-            type="button"
-            onClick={handleGuestSignIn}
-            disabled={Boolean(loading)}
-            style={{
-              width: '100%',
-              padding: '10px 16px',
-              borderRadius: 10,
-              border: '1px solid #E2E8F0',
-              background: '#F8FAFC',
-              color: '#64748B',
-              fontSize: '0.84rem',
-              fontWeight: 500,
-              cursor: loading ? 'not-allowed' : 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8,
-            }}
-          >
-            {loading === 'guest' ? (
-              <Loader2 size={16} className="animate-spin" />
-            ) : (
-              <User size={15} color="#64748B" />
-            )}
-            <span>Continue as Guest (No login required)</span>
-          </button>
         </div>
 
         <p
@@ -478,7 +427,7 @@ export default function AuthScreen({ onSignInSuccess }) {
             lineHeight: 1.4,
           }}
         >
-          Your data is isolated and secured to your account. Guest sessions can be linked to your account anytime.
+          Your data is isolated and secured to your authenticated account.
         </p>
       </div>
     </div>
