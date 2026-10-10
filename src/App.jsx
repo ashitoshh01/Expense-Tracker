@@ -742,12 +742,11 @@ export default function App() {
             isInstalled={isInstalled}
             cloudStatus={cloudStatus}
             onManualSync={handleManualSync}
+            onOpenSalarySavings={() => setModal('settings')}
             onOpenSettings={() => setModal('settings')}
-            onOpenHelp={() => setModal('help')}
             onOpenAbout={() => setModal('about')}
             onSignInGoogle={handleSignInGoogle}
             onSignOut={handleSignOut}
-            onResetAllData={handleResetAllData}
             onUpdateName={handleUpdateUserName}
           />
         )}
@@ -818,7 +817,6 @@ export default function App() {
           savingsGoal={state.savingsGoal}
           onSave={handleSaveSettings}
           onImportBackup={handleImportBackup}
-          onResetAllData={handleResetAllData}
           onClose={() => setModal(null)}
         />
       )}

@@ -4,8 +4,6 @@ import {
   Landmark,
   Tag,
   Download,
-  Settings,
-  HelpCircle,
   Info,
   LogOut,
   ChevronRight,
@@ -13,8 +11,8 @@ import {
   RefreshCw,
   ExternalLink,
   LogIn,
-  RotateCcw,
   Edit2,
+  CircleDollarSign,
 } from 'lucide-react'
 import { firebaseConfig } from '../../firebase'
 
@@ -27,11 +25,10 @@ export default function MoreScreen({
   cloudStatus,
   onManualSync,
   onOpenSettings,
-  onOpenHelp,
+  onOpenSalarySavings,
   onOpenAbout,
   onSignInGoogle,
   onSignOut,
-  onResetAllData,
   onUpdateName,
 }) {
   const [editingName, setEditingName] = useState(false)
@@ -257,14 +254,9 @@ export default function MoreScreen({
         </span>
       </div>
 
-      {/* Menu Items with all working actions */}
+      {/* Menu Items */}
       <div className="menu-list">
         <div className="menu-card">
-          <button className="menu-item" onClick={onInstallApp}>
-            <span className="menu-item-icon"><Smartphone /></span>
-            <span className="menu-item-text">App Shortcut & Icon</span>
-            <span className="menu-item-arrow"><ChevronRight /></span>
-          </button>
           <button className="menu-item" onClick={() => onNavigate('loans')}>
             <span className="menu-item-icon"><Landmark /></span>
             <span className="menu-item-text">Loans & Debt</span>
@@ -275,19 +267,14 @@ export default function MoreScreen({
             <span className="menu-item-text">Categories & History</span>
             <span className="menu-item-arrow"><ChevronRight /></span>
           </button>
+          <button className="menu-item" onClick={onOpenSalarySavings || onOpenSettings}>
+            <span className="menu-item-icon"><CircleDollarSign /></span>
+            <span className="menu-item-text">Salary & Savings</span>
+            <span className="menu-item-arrow"><ChevronRight /></span>
+          </button>
           <button className="menu-item" onClick={onExport}>
             <span className="menu-item-icon"><Download /></span>
             <span className="menu-item-text">Export & Backup</span>
-            <span className="menu-item-arrow"><ChevronRight /></span>
-          </button>
-          <button className="menu-item" onClick={onOpenSettings}>
-            <span className="menu-item-icon"><Settings /></span>
-            <span className="menu-item-text">Settings (Salary & Goals)</span>
-            <span className="menu-item-arrow"><ChevronRight /></span>
-          </button>
-          <button className="menu-item" onClick={onOpenHelp}>
-            <span className="menu-item-icon"><HelpCircle /></span>
-            <span className="menu-item-text">Help & Support</span>
             <span className="menu-item-arrow"><ChevronRight /></span>
           </button>
           <button className="menu-item" onClick={onOpenAbout}>
@@ -295,21 +282,6 @@ export default function MoreScreen({
             <span className="menu-item-text">About Wallet FIX</span>
             <span className="menu-item-arrow"><ChevronRight /></span>
           </button>
-          {onResetAllData && (
-            <button
-              className="menu-item"
-              onClick={onResetAllData}
-              style={{ color: '#EF4444' }}
-            >
-              <span className="menu-item-icon" style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444' }}>
-                <RotateCcw />
-              </span>
-              <span className="menu-item-text" style={{ color: '#EF4444', fontWeight: 600 }}>
-                Reset All Data to ₹0
-              </span>
-              <span className="menu-item-arrow"><ChevronRight /></span>
-            </button>
-          )}
         </div>
       </div>
 
