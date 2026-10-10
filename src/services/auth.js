@@ -12,6 +12,8 @@ import {
   getAuth,
   signInAnonymously,
   signInWithPopup,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
   linkWithPopup,
   GoogleAuthProvider,
   signOut as fbSignOut,
@@ -77,6 +79,38 @@ export async function signInAsGuest() {
     return cred.user
   } catch (err) {
     console.error('Guest sign-in error:', err)
+    throw err
+  }
+}
+
+/**
+ * Sign in with email and password.
+ * @param {string} email
+ * @param {string} password
+ * @returns {Promise<import('firebase/auth').User>}
+ */
+export async function signInWithEmail(email, password) {
+  try {
+    const cred = await signInWithEmailAndPassword(auth, email.trim(), password)
+    return cred.user
+  } catch (err) {
+    console.error('Email sign-in error:', err)
+    throw err
+  }
+}
+
+/**
+ * Create a new account with email and password.
+ * @param {string} email
+ * @param {string} password
+ * @returns {Promise<import('firebase/auth').User>}
+ */
+export async function signUpWithEmail(email, password) {
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, email.trim(), password)
+    return cred.user
+  } catch (err) {
+    console.error('Email sign-up error:', err)
     throw err
   }
 }

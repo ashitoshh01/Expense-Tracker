@@ -1,20 +1,86 @@
 import { useState } from 'react'
 import {
   Wallet,
-  ShieldCheck,
-  Zap,
-  TrendingUp,
+  Mail,
   Lock,
-  ArrowRight,
+  Eye,
+  EyeOff,
   AlertCircle,
   Loader2,
-  CalendarCheck,
+  ArrowRight,
+  User,
 } from 'lucide-react'
-import { signInWithGoogle, signInAsGuest } from '../../services/auth'
+import {
+  signInWithEmail,
+  signUpWithEmail,
+  signInWithGoogle,
+  signInAsGuest,
+} from '../../services/auth'
 
 export default function AuthScreen({ onSignInSuccess }) {
-  const [loading, setLoading] = useState(null) // 'google' | 'guest' | null
+  const [isSignUp, setIsSignUp] = useState(false)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+
+  const [loading, setLoading] = useState(null) // 'email' | 'google' | 'guest' | null
   const [error, setError] = useState('')
+
+  // Map Firebase auth errors to simple user-friendly messages
+  const formatAuthError = (err) => {
+    const code = err?.code || ''
+    if (code === 'auth/invalid-credential' || code === 'auth/wrong-password') {
+      return 'Incorrect email or password. If you are new, click "Create an account" below.'
+    }
+    if (code === 'auth/user-not-found') {
+      return 'No account found with this email. Click "Create an account" below to register.'
+    }
+    if (code === 'auth/email-already-in-use') {
+      return 'An account with this email already exists. Please sign in instead.'
+    }
+    if (code === 'auth/weak-password') {
+      return 'Password should be at least 6 characters long.'
+    }
+    if (code === 'auth/invalid-email') {
+      return 'Please enter a valid email address.'
+    }
+    if (code === 'auth/operation-not-allowed') {
+      return 'Email/password sign-in is not enabled in Firebase Console. You can continue with Google or Guest mode.'
+    }
+    return err?.message || 'Authentication failed. Please try again.'
+  }
+
+  const handleEmailAuth = async (e) => {
+    e.preventDefault()
+    setError('')
+
+    const cleanEmail = email.trim()
+    if (!cleanEmail) {
+      setError('Please enter your email address')
+      return
+    }
+    if (!password || password.length < 6) {
+      setError('Password must be at least 6 characters')
+      return
+    }
+
+    setLoading('email')
+    try {
+      let user
+      if (isSignUp) {
+        user = await signUpWithEmail(cleanEmail, password)
+      } else {
+        user = await signInWithEmail(cleanEmail, password)
+      }
+      if (user && onSignInSuccess) {
+        onSignInSuccess(user)
+      }
+    } catch (err) {
+      setError(formatAuthError(err))
+    } finally {
+      setLoading(null)
+    }
+  }
 
   const handleGoogleSignIn = async () => {
     setError('')
@@ -26,7 +92,7 @@ export default function AuthScreen({ onSignInSuccess }) {
       }
     } catch (err) {
       if (err?.code !== 'auth/popup-closed-by-user') {
-        setError(err.message || 'Google sign-in failed. Please try again.')
+        setError(formatAuthError(err))
       }
     } finally {
       setLoading(null)
@@ -42,208 +108,316 @@ export default function AuthScreen({ onSignInSuccess }) {
         onSignInSuccess(user)
       }
     } catch (err) {
-      setError(err.message || 'Guest session initialization failed.')
+      setError(formatAuthError(err))
     } finally {
       setLoading(null)
     }
   }
 
   return (
-    <div className="auth-container" style={{
-      minHeight: '100dvh',
-      display: 'flex',
-      flexDirection: 'column',
-      justifyContent: 'center',
-      alignItems: 'center',
-      padding: '24px 20px',
-      background: 'radial-gradient(ellipse at top, #1e1b4b 0%, #09090b 60%, #000000 100%)',
-      color: '#f8fafc',
-      fontFamily: 'inherit',
-    }}>
-      <div style={{
-        maxWidth: 440,
-        width: '100%',
+    <div
+      style={{
+        minHeight: '100dvh',
         display: 'flex',
         flexDirection: 'column',
+        justifyContent: 'center',
         alignItems: 'center',
-        textAlign: 'center',
-      }}>
-        {/* Brand Icon Header */}
-        <div style={{
-          position: 'relative',
-          marginBottom: 24,
-        }}>
-          <div style={{
-            position: 'absolute',
-            inset: -12,
-            background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.4), rgba(236, 72, 153, 0.3))',
-            borderRadius: '50%',
-            filter: 'blur(20px)',
-            opacity: 0.8,
-          }} />
-          <div style={{
-            position: 'relative',
-            width: 76,
-            height: 76,
-            borderRadius: 24,
-            background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: '0 20px 40px rgba(79, 70, 229, 0.4)',
-            border: '1px solid rgba(255, 255, 255, 0.2)',
-          }}>
-            <Wallet size={38} color="#ffffff" strokeWidth={2.2} />
-          </div>
-        </div>
-
-        {/* Title & Tagline */}
-        <h1 style={{
-          fontSize: '2rem',
-          fontWeight: 800,
-          letterSpacing: '-0.03em',
-          margin: '0 0 8px 0',
-          background: 'linear-gradient(to right, #ffffff, #c7d2fe)',
-          WebkitBackgroundClip: 'text',
-          WebkitTextFillColor: 'transparent',
-        }}>
-          Wallet FIX
-        </h1>
-        <p style={{
-          fontSize: '0.95rem',
-          color: '#94a3b8',
-          margin: '0 0 28px 0',
-          lineHeight: 1.5,
-          maxWidth: 340,
-        }}>
-          Your intelligent financial control center with automated salary credits, strict precision, and isolated cloud sync.
-        </p>
-
-        {/* Feature Highlights Card */}
-        <div style={{
+        padding: '24px 16px',
+        background: '#F8FAFC',
+        color: '#0F172A',
+        fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+      }}
+    >
+      <div
+        style={{
           width: '100%',
-          background: 'rgba(255, 255, 255, 0.03)',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
-          borderRadius: 18,
-          padding: '16px 18px',
-          marginBottom: 28,
-          backdropFilter: 'blur(12px)',
-          textAlign: 'left',
+          maxWidth: 380,
           display: 'flex',
           flexDirection: 'column',
-          gap: 12,
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{
-              width: 32,
-              height: 32,
-              borderRadius: 10,
-              background: 'rgba(99, 102, 241, 0.15)',
+          alignItems: 'center',
+        }}
+      >
+        {/* Simple Brand Header */}
+        <div style={{ textAlign: 'center', marginBottom: 24 }}>
+          <div
+            style={{
+              width: 52,
+              height: 52,
+              borderRadius: 14,
+              background: '#0F172A',
+              color: '#FFFFFF',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: '#818cf8',
-              flexShrink: 0,
-            }}>
-              <CalendarCheck size={18} />
-            </div>
-            <div>
-              <div style={{ fontSize: '0.86rem', fontWeight: 600, color: '#e2e8f0' }}>Automated Recurring Incomes</div>
-              <div style={{ fontSize: '0.76rem', color: '#64748b' }}>Scheduled monthly salary & income credits on exact dates</div>
-            </div>
+              margin: '0 auto 12px',
+              boxShadow: '0 4px 12px rgba(15, 23, 42, 0.12)',
+            }}
+          >
+            <Wallet size={26} strokeWidth={2.2} />
           </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{
-              width: 32,
-              height: 32,
-              borderRadius: 10,
-              background: 'rgba(16, 185, 129, 0.15)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#34d399',
-              flexShrink: 0,
-            }}>
-              <ShieldCheck size={18} />
-            </div>
-            <div>
-              <div style={{ fontSize: '0.86rem', fontWeight: 600, color: '#e2e8f0' }}>Bank-Grade Math Precision</div>
-              <div style={{ fontSize: '0.76rem', color: '#64748b' }}>Paise integer math with zero floating-point rounding errors</div>
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{
-              width: 32,
-              height: 32,
-              borderRadius: 10,
-              background: 'rgba(245, 158, 11, 0.15)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#fbbf24',
-              flexShrink: 0,
-            }}>
-              <Lock size={18} />
-            </div>
-            <div>
-              <div style={{ fontSize: '0.86rem', fontWeight: 600, color: '#e2e8f0' }}>UID-Scoped Privacy</div>
-              <div style={{ fontSize: '0.76rem', color: '#64748b' }}>Encrypted Firestore isolation per authenticated identity</div>
-            </div>
-          </div>
+          <h1
+            style={{
+              fontSize: '1.5rem',
+              fontWeight: 800,
+              color: '#0F172A',
+              letterSpacing: '-0.02em',
+              margin: '0 0 4px',
+            }}
+          >
+            Wallet FIX
+          </h1>
+          <p style={{ fontSize: '0.88rem', color: '#64748B', margin: 0 }}>
+            {isSignUp ? 'Create your account to start tracking' : 'Sign in to access your wallet'}
+          </p>
         </div>
 
-        {/* Error Notification */}
-        {error && (
-          <div style={{
+        {/* Clean Light Card */}
+        <div
+          style={{
             width: '100%',
-            background: 'rgba(239, 68, 68, 0.1)',
-            border: '1px solid rgba(239, 68, 68, 0.3)',
-            borderRadius: 12,
-            padding: '12px 14px',
-            marginBottom: 20,
-            color: '#f87171',
-            fontSize: '0.82rem',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            textAlign: 'left',
-          }}>
-            <AlertCircle size={18} style={{ flexShrink: 0 }} />
-            <span>{error}</span>
-          </div>
-        )}
+            background: '#FFFFFF',
+            border: '1px solid #E2E8F0',
+            borderRadius: 16,
+            padding: '24px 22px',
+            boxShadow: '0 4px 20px rgba(15, 23, 42, 0.04)',
+          }}
+        >
+          {/* Error Banner */}
+          {error && (
+            <div
+              style={{
+                background: '#FEF2F2',
+                border: '1px solid #FCA5A5',
+                borderRadius: 10,
+                padding: '10px 12px',
+                marginBottom: 16,
+                color: '#DC2626',
+                fontSize: '0.82rem',
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 8,
+                lineHeight: 1.4,
+              }}
+            >
+              <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+              <span>{error}</span>
+            </div>
+          )}
 
-        {/* Action Buttons */}
-        <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {/* Google Sign In */}
+          {/* Email & Password Form */}
+          <form onSubmit={handleEmailAuth}>
+            <div style={{ marginBottom: 14 }}>
+              <label
+                style={{
+                  display: 'block',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  color: '#334155',
+                  marginBottom: 6,
+                }}
+              >
+                Email Address
+              </label>
+              <div style={{ position: 'relative' }}>
+                <Mail
+                  size={16}
+                  style={{
+                    position: 'absolute',
+                    left: 12,
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    color: '#94A3B8',
+                  }}
+                />
+                <input
+                  type="email"
+                  required
+                  placeholder="name@example.com"
+                  value={email}
+                  onChange={(e) => {
+                    setEmail(e.target.value)
+                    setError('')
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '11px 12px 11px 36px',
+                    borderRadius: 10,
+                    border: '1px solid #CBD5E1',
+                    background: '#FFFFFF',
+                    color: '#0F172A',
+                    fontSize: '0.9rem',
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 18 }}>
+              <label
+                style={{
+                  display: 'block',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  color: '#334155',
+                  marginBottom: 6,
+                }}
+              >
+                Password
+              </label>
+              <div style={{ position: 'relative' }}>
+                <Lock
+                  size={16}
+                  style={{
+                    position: 'absolute',
+                    left: 12,
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    color: '#94A3B8',
+                  }}
+                />
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  placeholder="At least 6 characters"
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value)
+                    setError('')
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '11px 36px 11px 36px',
+                    borderRadius: 10,
+                    border: '1px solid #CBD5E1',
+                    background: '#FFFFFF',
+                    color: '#0F172A',
+                    fontSize: '0.9rem',
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    color: '#94A3B8',
+                    cursor: 'pointer',
+                    padding: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                  }}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </div>
+
+            {/* Submit Button */}
+            <button
+              type="submit"
+              disabled={Boolean(loading)}
+              style={{
+                width: '100%',
+                padding: '12px 16px',
+                borderRadius: 10,
+                border: 'none',
+                background: '#0F172A',
+                color: '#FFFFFF',
+                fontSize: '0.92rem',
+                fontWeight: 600,
+                cursor: loading ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                transition: 'background 0.2s ease',
+              }}
+            >
+              {loading === 'email' ? (
+                <Loader2 size={18} className="animate-spin" />
+              ) : (
+                <>
+                  <span>{isSignUp ? 'Create Account' : 'Sign In'}</span>
+                  <ArrowRight size={16} />
+                </>
+              )}
+            </button>
+          </form>
+
+          {/* Switch between Sign In and Create Account */}
+          <div style={{ textAlign: 'center', marginTop: 14 }}>
+            <button
+              type="button"
+              onClick={() => {
+                setIsSignUp(!isSignUp)
+                setError('')
+              }}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#2563EB',
+                fontSize: '0.82rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                padding: 4,
+              }}
+            >
+              {isSignUp
+                ? 'Already have an account? Sign In'
+                : "Don't have an account? Create one"}
+            </button>
+          </div>
+
+          {/* Divider */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              margin: '20px 0 16px',
+              color: '#94A3B8',
+              fontSize: '0.78rem',
+            }}
+          >
+            <div style={{ flex: 1, height: 1, background: '#E2E8F0' }} />
+            <span style={{ padding: '0 10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              or
+            </span>
+            <div style={{ flex: 1, height: 1, background: '#E2E8F0' }} />
+          </div>
+
+          {/* Google Button */}
           <button
+            type="button"
             onClick={handleGoogleSignIn}
             disabled={Boolean(loading)}
             style={{
               width: '100%',
-              padding: '14px 20px',
-              borderRadius: 14,
-              border: '1px solid rgba(255, 255, 255, 0.15)',
-              background: '#ffffff',
-              color: '#0f172a',
-              fontSize: '0.95rem',
+              padding: '11px 16px',
+              borderRadius: 10,
+              border: '1px solid #CBD5E1',
+              background: '#FFFFFF',
+              color: '#334155',
+              fontSize: '0.88rem',
               fontWeight: 600,
               cursor: loading ? 'not-allowed' : 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: 12,
-              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.3)',
-              transition: 'all 0.2s ease',
-              opacity: loading && loading !== 'google' ? 0.6 : 1,
+              gap: 10,
+              marginBottom: 10,
             }}
           >
             {loading === 'google' ? (
-              <Loader2 size={20} className="animate-spin" />
+              <Loader2 size={18} className="animate-spin" />
             ) : (
-              <svg width="20" height="20" viewBox="0 0 24 24">
+              <svg width="18" height="18" viewBox="0 0 24 24">
                 <path
                   fill="#4285F4"
                   d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -262,47 +436,49 @@ export default function AuthScreen({ onSignInSuccess }) {
                 />
               </svg>
             )}
-            <span>{loading === 'google' ? 'Connecting to Google...' : 'Continue with Google'}</span>
+            <span>Sign in with Google</span>
           </button>
 
-          {/* Continue as Guest */}
+          {/* Continue as Guest Button */}
           <button
+            type="button"
             onClick={handleGuestSignIn}
             disabled={Boolean(loading)}
             style={{
               width: '100%',
-              padding: '14px 20px',
-              borderRadius: 14,
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              background: 'rgba(255, 255, 255, 0.05)',
-              color: '#e2e8f0',
-              fontSize: '0.92rem',
+              padding: '10px 16px',
+              borderRadius: 10,
+              border: '1px solid #E2E8F0',
+              background: '#F8FAFC',
+              color: '#64748B',
+              fontSize: '0.84rem',
               fontWeight: 500,
               cursor: loading ? 'not-allowed' : 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: 10,
-              transition: 'all 0.2s ease',
-              opacity: loading && loading !== 'guest' ? 0.6 : 1,
+              gap: 8,
             }}
           >
             {loading === 'guest' ? (
-              <Loader2 size={18} className="animate-spin" />
+              <Loader2 size={16} className="animate-spin" />
             ) : (
-              <ShieldCheck size={18} color="#94a3b8" />
+              <User size={15} color="#64748B" />
             )}
-            <span>{loading === 'guest' ? 'Preparing Session...' : 'Continue as Guest (Local Session)'}</span>
+            <span>Continue as Guest (No login required)</span>
           </button>
         </div>
 
-        <p style={{
-          fontSize: '0.75rem',
-          color: '#64748b',
-          marginTop: 20,
-          lineHeight: 1.5,
-        }}>
-          Guest accounts can be securely linked to a Google account at any time in Settings without losing any local transactions or financial data.
+        <p
+          style={{
+            fontSize: '0.74rem',
+            color: '#94A3B8',
+            marginTop: 18,
+            textAlign: 'center',
+            lineHeight: 1.4,
+          }}
+        >
+          Your data is isolated and secured to your account. Guest sessions can be linked to your account anytime.
         </p>
       </div>
     </div>
