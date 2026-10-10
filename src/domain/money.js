@@ -14,11 +14,16 @@ export function toPaise(rupees) {
   if (rupees === null || rupees === undefined || rupees === '') {
     throw new Error('Amount is required')
   }
-  const num = typeof rupees === 'string' ? Number(rupees.trim()) : Number(rupees)
+  const cleanStr = typeof rupees === 'string' ? rupees.replace(/,/g, '').trim() : rupees
+  const num = typeof cleanStr === 'string' ? Number(cleanStr) : Number(cleanStr)
   if (!Number.isFinite(num)) {
     throw new Error('Amount must be a finite number')
   }
-  return Math.round(num * 100)
+  const paise = Math.round(num * 100)
+  if (Math.abs(paise) > Number.MAX_SAFE_INTEGER) {
+    throw new Error('Amount exceeds maximum supported precision')
+  }
+  return paise
 }
 
 /**

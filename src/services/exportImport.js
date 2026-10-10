@@ -112,28 +112,138 @@ export function exportToJSON(state) {
   URL.revokeObjectURL(url)
 }
 
+const MAX_IMPORT_SIZE_BYTES = 5 * 1024 * 1024 // 5MB limit
+const ALLOWED_TX_TYPES = new Set([
+  'income',
+  'salary',
+  'spent',
+  'expense',
+  'savings_deposit',
+  'savings_withdraw',
+  'loan_borrow',
+  'loan_lend',
+  'loan_repayment',
+  'loan_collection',
+  'auto_save',
+  'add',
+])
+
 /**
  * Parse and validate an imported backup JSON file.
+ *
+ * Requirements verified:
+ * - Reject oversized imports (> 5MB).
+ * - Reject unsupported future schema versions.
+ * - Detect and reject duplicate transaction IDs.
+ * - Enforce positive, finite monetary amounts on transactions.
+ * - Validate loan bounds (outstanding <= amount, non-negative).
+ * - All-or-nothing validation preventing partial corruption.
+ *
  * @param {string} jsonString
  * @returns {{ ok: boolean, data?: Object, error?: string }}
  */
 export function validateAndParseImport(jsonString) {
+  if (typeof jsonString !== 'string') {
+    return { ok: false, error: 'Import payload must be a string' }
+  }
+
+  if (jsonString.length > MAX_IMPORT_SIZE_BYTES) {
+    return { ok: false, error: 'Import file exceeds maximum allowed size (5MB)' }
+  }
+
   try {
     const parsed = JSON.parse(jsonString)
+
+    if (parsed === null || typeof parsed !== 'object') {
+      return { ok: false, error: 'Invalid backup file format: payload must be a JSON object' }
+    }
+
+    // Schema version validation
+    if (parsed.meta && parsed.meta.schemaVersion !== undefined) {
+      const version = Number(parsed.meta.schemaVersion)
+      if (!Number.isInteger(version) || version < 1 || version > SCHEMA_VERSION) {
+        return {
+          ok: false,
+          error: `Unsupported schema version: ${parsed.meta.schemaVersion}. Current supported version is ${SCHEMA_VERSION}.`,
+        }
+      }
+    }
 
     // Handle either versioned wrapper ({ meta, data }) or direct state ({ balance, ... })
     const rawData = parsed.data || parsed
 
-    if (typeof rawData !== 'object' || rawData === null) {
+    if (typeof rawData !== 'object' || rawData === null || Array.isArray(rawData)) {
       return { ok: false, error: 'Invalid backup file format: missing state payload' }
     }
 
-    if (rawData.transactions && !Array.isArray(rawData.transactions)) {
-      return { ok: false, error: 'Corrupt transactions in backup' }
+    // Validate balances
+    if (rawData.balance !== undefined && !Number.isFinite(Number(rawData.balance))) {
+      return { ok: false, error: 'Corrupt cash balance: must be a finite number' }
+    }
+    if (rawData.savings !== undefined && (!Number.isFinite(Number(rawData.savings)) || Number(rawData.savings) < 0)) {
+      return { ok: false, error: 'Corrupt savings balance: cannot be negative or non-finite' }
     }
 
-    if (rawData.loans && !Array.isArray(rawData.loans)) {
-      return { ok: false, error: 'Corrupt loans in backup' }
+    // Validate transactions
+    if (rawData.transactions !== undefined) {
+      if (!Array.isArray(rawData.transactions)) {
+        return { ok: false, error: 'Corrupt transactions in backup: must be an array' }
+      }
+
+      const seenIds = new Set()
+      for (let i = 0; i < rawData.transactions.length; i++) {
+        const tx = rawData.transactions[i]
+        if (!tx || typeof tx !== 'object') {
+          return { ok: false, error: `Corrupt transaction at index ${i}` }
+        }
+
+        // Duplicate ID check
+        if (tx.id) {
+          if (seenIds.has(tx.id)) {
+            return { ok: false, error: `Duplicate transaction ID detected: ${tx.id}` }
+          }
+          seenIds.add(tx.id)
+        }
+
+        // Amount check
+        const amt = Number(tx.amount)
+        if (!Number.isFinite(amt) || amt <= 0) {
+          return { ok: false, error: `Invalid transaction amount at index ${i}: must be positive and finite` }
+        }
+
+        // Type check
+        if (tx.type && !ALLOWED_TX_TYPES.has(tx.type)) {
+          return { ok: false, error: `Unknown transaction type "${tx.type}" at index ${i}` }
+        }
+      }
+    }
+
+    // Validate loans
+    if (rawData.loans !== undefined) {
+      if (!Array.isArray(rawData.loans)) {
+        return { ok: false, error: 'Corrupt loans in backup: must be an array' }
+      }
+
+      for (let i = 0; i < rawData.loans.length; i++) {
+        const loan = rawData.loans[i]
+        if (!loan || typeof loan !== 'object') {
+          return { ok: false, error: `Corrupt loan at index ${i}` }
+        }
+
+        const loanAmt = Number(loan.amount)
+        if (!Number.isFinite(loanAmt) || loanAmt <= 0) {
+          return { ok: false, error: `Invalid loan amount at index ${i}: must be positive and finite` }
+        }
+
+        const outstanding = Number(loan.outstanding !== undefined ? loan.outstanding : loan.amount)
+        if (!Number.isFinite(outstanding) || outstanding < 0 || outstanding > loanAmt) {
+          return { ok: false, error: `Invalid loan outstanding balance at index ${i}` }
+        }
+
+        if (loan.repayments !== undefined && !Array.isArray(loan.repayments)) {
+          return { ok: false, error: `Corrupt loan repayments at index ${i}: must be an array` }
+        }
+      }
     }
 
     const state = normalizeState(rawData)

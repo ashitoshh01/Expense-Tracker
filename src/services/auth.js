@@ -12,6 +12,7 @@ import {
   getAuth,
   signInAnonymously,
   signInWithPopup,
+  linkWithPopup,
   GoogleAuthProvider,
   signOut as fbSignOut,
   onAuthStateChanged,
@@ -77,10 +78,28 @@ export function subscribeAuthState(callback) {
 
 /**
  * Sign in with Google provider.
+ * If currently anonymous, links account to Google to preserve data under the exact same UID.
+ * Falls back to standard signInWithPopup if already linked or credential belongs to another account.
  * @returns {Promise<import('firebase/auth').User>}
  */
 export async function signInWithGoogle() {
   try {
+    if (auth.currentUser && auth.currentUser.isAnonymous) {
+      try {
+        const result = await linkWithPopup(auth.currentUser, googleProvider)
+        return result.user
+      } catch (linkErr) {
+        if (
+          linkErr.code === 'auth/credential-already-in-use' ||
+          linkErr.code === 'auth/email-already-in-use' ||
+          linkErr.code === 'auth/provider-already-linked'
+        ) {
+          const result = await signInWithPopup(auth, googleProvider)
+          return result.user
+        }
+        throw linkErr
+      }
+    }
     const result = await signInWithPopup(auth, googleProvider)
     return result.user
   } catch (err) {

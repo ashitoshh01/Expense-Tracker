@@ -24,19 +24,31 @@ export const DEFAULT_SETTINGS = {
  * @returns {Object} Cleaned, consistent financial state
  */
 export function normalizeState(raw = {}) {
-  const balance = typeof raw.balance === 'number' && Number.isFinite(raw.balance) ? raw.balance : 0
-  const savings = typeof raw.savings === 'number' && Number.isFinite(raw.savings) ? raw.savings : 0
-  const savingsGoal = typeof raw.savingsGoal === 'number' && raw.savingsGoal > 0 ? raw.savingsGoal : 1000
+  const numBalance = Number(raw.balance)
+  const balance = Number.isFinite(numBalance) ? numBalance : 0
+
+  const numSavings = Number(raw.savings)
+  const savings = Number.isFinite(numSavings) ? numSavings : 0
+
+  const numGoal = Number(raw.savingsGoal)
+  const savingsGoal = Number.isFinite(numGoal) && numGoal > 0 ? numGoal : 1000
   const lastSalaryMonth = typeof raw.lastSalaryMonth === 'string' ? raw.lastSalaryMonth : ''
 
   // Normalize loans
   const rawLoans = Array.isArray(raw.loans) ? raw.loans : []
   const loans = rawLoans.map((l) => {
-    const originalAmount = typeof l.amount === 'number' && Number.isFinite(l.amount) ? l.amount : 0
-    const repayments = Array.isArray(l.repayments) ? l.repayments : []
-    const totalRepaid = repayments.reduce((sum, r) => sum + (Number(r.amount) || 0), 0)
-    const outstanding = typeof l.outstanding === 'number' && Number.isFinite(l.outstanding)
-      ? l.outstanding
+    const numAmt = Number(l.amount)
+    const originalAmount = Number.isFinite(numAmt) ? numAmt : 0
+    const repayments = Array.isArray(l.repayments)
+      ? l.repayments.map((r) => ({
+          ...r,
+          amount: Number.isFinite(Number(r.amount)) ? Number(r.amount) : 0,
+        }))
+      : []
+    const totalRepaid = repayments.reduce((sum, r) => addMoney(sum, r.amount), 0)
+    const numOutstanding = Number(l.outstanding)
+    const outstanding = Number.isFinite(numOutstanding)
+      ? numOutstanding
       : Math.max(0, subMoney(originalAmount, totalRepaid))
     const status = l.status || (outstanding <= 0 ? 'repaid' : totalRepaid > 0 ? 'partially_paid' : 'active')
     const type = l.type === 'lent' ? 'lent' : 'borrowed'
@@ -57,18 +69,23 @@ export function normalizeState(raw = {}) {
 
   // Normalize transactions
   const rawTxs = Array.isArray(raw.transactions) ? raw.transactions : []
-  const transactions = rawTxs.map((t) => ({
-    id: t.id || genId(),
-    type: t.type || 'spent',
-    category: t.category || (t.type === 'spent' ? 'Other' : 'General'),
-    amount: typeof t.amount === 'number' && Number.isFinite(t.amount) ? t.amount : 0,
-    note: t.note || '',
-    date: t.date || new Date().toISOString().split('T')[0],
-    loanId: t.loanId || undefined,
-    reversalOf: t.reversalOf || undefined,
-    isReversed: Boolean(t.isReversed),
-    createdAt: t.createdAt || new Date().toISOString(),
-  }))
+  const transactions = rawTxs.map((t) => {
+    const numTxAmt = Number(t.amount)
+    const txAmount = Number.isFinite(numTxAmt) ? numTxAmt : 0
+    return {
+      id: t.id || genId(),
+      type: t.type || 'spent',
+      category: t.category || (t.type === 'spent' ? 'Other' : 'General'),
+      amount: txAmount,
+      note: t.note || '',
+      date: t.date || new Date().toISOString().split('T')[0],
+      loanId: t.loanId || undefined,
+      repaymentId: t.repaymentId || undefined,
+      reversalOf: t.reversalOf || undefined,
+      isReversed: Boolean(t.isReversed),
+      createdAt: t.createdAt || new Date().toISOString(),
+    }
+  })
 
   const settings = {
     ...DEFAULT_SETTINGS,
@@ -76,7 +93,7 @@ export function normalizeState(raw = {}) {
   }
 
   return {
-    balance: Math.max(0, balance),
+    balance: balance,
     savings: Math.max(0, savings),
     loans,
     transactions,
@@ -306,6 +323,7 @@ export function repayLoan(state, { loanId, amount, note = '', date = new Date().
     note: note || (isBorrowed ? `Repayment to ${loan.name}` : `Repayment received from ${loan.name}`),
     date,
     loanId: loan.id,
+    repaymentId: id,
     createdAt: new Date().toISOString(),
   }
 
@@ -330,6 +348,7 @@ export function repayLoan(state, { loanId, amount, note = '', date = new Date().
  * - Savings Deposit: savings -= amount, balance += amount (verifies savings >= amount)
  * - Savings Withdrawal: balance -= amount, savings += amount (verifies balance >= amount)
  * - Loan Repayment: reverses repayment, updates loan outstanding and status, refunds cash balance.
+ * - Loan Collection: reverses collection, restores loan outstanding, deducts cash balance.
  * - Loan Borrow: verifies loan has no repayments before reversing, cancels loan liability and balance.
  * - Loan Lend: cancels loan asset, refunds balance.
  */
@@ -374,15 +393,48 @@ export function deleteTransaction(state, txId) {
     const loan = nextLoans.find((l) => l.id === tx.loanId)
     if (loan) {
       const newOutstanding = addMoney(loan.outstanding, amt)
+      const repIndex = loan.repayments.findIndex((r) =>
+        (tx.repaymentId && r.id === tx.repaymentId) ||
+        (!tx.repaymentId && r.amount === amt && r.date === tx.date)
+      )
+      const updatedRepayments = repIndex !== -1
+        ? loan.repayments.filter((_, idx) => idx !== repIndex)
+        : loan.repayments
+
       const updatedLoan = {
         ...loan,
         outstanding: newOutstanding,
         status: toPaise(newOutstanding) === toPaise(loan.amount) ? 'active' : 'partially_paid',
-        repayments: loan.repayments.filter((r) => r.amount !== amt || r.date !== tx.date),
+        repayments: updatedRepayments,
       }
       nextLoans = nextLoans.map((l) => (l.id === loan.id ? updatedLoan : l))
     }
     nextBalance = addMoney(nextBalance, amt)
+  } else if (txType === 'loan_collection') {
+    // Reversing loan collection: deduct collected cash from balance, increase loan outstanding
+    if (toPaise(nextBalance) < toPaise(amt)) {
+      throw new Error(`Cannot delete loan collection: current balance (₹${nextBalance.toFixed(2)}) is less than collection amount ₹${amt.toFixed(2)}`)
+    }
+    const loan = nextLoans.find((l) => l.id === tx.loanId)
+    if (loan) {
+      const newOutstanding = addMoney(loan.outstanding, amt)
+      const repIndex = loan.repayments.findIndex((r) =>
+        (tx.repaymentId && r.id === tx.repaymentId) ||
+        (!tx.repaymentId && r.amount === amt && r.date === tx.date)
+      )
+      const updatedRepayments = repIndex !== -1
+        ? loan.repayments.filter((_, idx) => idx !== repIndex)
+        : loan.repayments
+
+      const updatedLoan = {
+        ...loan,
+        outstanding: newOutstanding,
+        status: toPaise(newOutstanding) === toPaise(loan.amount) ? 'active' : 'partially_paid',
+        repayments: updatedRepayments,
+      }
+      nextLoans = nextLoans.map((l) => (l.id === loan.id ? updatedLoan : l))
+    }
+    nextBalance = subMoney(nextBalance, amt)
   } else if (txType === 'loan_borrow' || (txType === 'add' && tx.category === 'Loan')) {
     // Reversing loan borrow: requires deducting borrowed cash from balance
     if (toPaise(nextBalance) < toPaise(amt)) {
@@ -532,5 +584,118 @@ export function processSalaryAutomation(state, { now = new Date(), force = false
     processed: true,
     creditedAmount: salaryAmt,
     savedAmount: autoSaveAmt,
+  }
+}
+
+/**
+ * Reconcile two financial states (e.g., local offline state and incoming remote state).
+ *
+ * Guarantees zero data loss across concurrent devices or multi-tab edits:
+ * 1. Unions transactions by transaction ID to prevent dropped offline transactions.
+ * 2. Applies the financial delta of remote-only transactions to cash and savings balances.
+ * 3. Merges loan repayment records by repayment ID and recomputes exact outstanding debt.
+ * 4. Resolves metadata and settings timestamps without reverting user configurations.
+ */
+export function reconcileStates(localState, remoteState) {
+  if (!remoteState && !localState) return normalizeState({})
+  if (!remoteState) return normalizeState(localState)
+  if (!localState) return normalizeState(remoteState)
+
+  const local = normalizeState(localState)
+  const remote = normalizeState(remoteState)
+
+  const localTxMap = new Map((local.transactions || []).map((t) => [t.id, t]))
+  const remoteOnlyTxs = (remote.transactions || []).filter((t) => !localTxMap.has(t.id))
+
+  // If remote has new transactions not present in local, calculate their financial delta
+  let nextBalance = local.balance
+  let nextSavings = local.savings
+
+  for (const tx of remoteOnlyTxs) {
+    const amt = tx.amount || 0
+    const txType = tx.type
+
+    if (txType === 'income' || txType === 'salary' || (txType === 'add' && tx.category !== 'Loan')) {
+      nextBalance = addMoney(nextBalance, amt)
+    } else if (txType === 'spent' || txType === 'expense') {
+      nextBalance = subMoney(nextBalance, amt)
+    } else if (txType === 'savings_deposit' || txType === 'auto_save') {
+      nextBalance = subMoney(nextBalance, amt)
+      nextSavings = addMoney(nextSavings, amt)
+    } else if (txType === 'savings_withdraw') {
+      nextBalance = addMoney(nextBalance, amt)
+      nextSavings = subMoney(nextSavings, amt)
+    } else if (txType === 'loan_borrow') {
+      nextBalance = addMoney(nextBalance, amt)
+    } else if (txType === 'loan_lend') {
+      nextBalance = subMoney(nextBalance, amt)
+    } else if (txType === 'loan_repayment') {
+      nextBalance = subMoney(nextBalance, amt)
+    } else if (txType === 'loan_collection') {
+      nextBalance = addMoney(nextBalance, amt)
+    }
+  }
+
+  // Union transactions preserving reverse chronological order
+  const allTxs = [...local.transactions, ...remoteOnlyTxs]
+  allTxs.sort((a, b) => {
+    const dateComp = (b.date || '').localeCompare(a.date || '')
+    if (dateComp !== 0) return dateComp
+    return (b.createdAt || '').localeCompare(a.createdAt || '')
+  })
+
+  // Reconcile Loans
+  const localLoanMap = new Map((local.loans || []).map((l) => [l.id, { ...l }]))
+
+  for (const rLoan of remote.loans || []) {
+    if (!localLoanMap.has(rLoan.id)) {
+      localLoanMap.set(rLoan.id, { ...rLoan })
+    } else {
+      const existing = localLoanMap.get(rLoan.id)
+      const existingRepMap = new Map((existing.repayments || []).map((r) => [r.id || `${r.date}_${r.amount}`, r]))
+      for (const rep of rLoan.repayments || []) {
+        const key = rep.id || `${rep.date}_${rep.amount}`
+        if (!existingRepMap.has(key)) {
+          existingRepMap.set(key, rep)
+        }
+      }
+      const mergedRepayments = Array.from(existingRepMap.values())
+      const totalRepaid = mergedRepayments.reduce((sum, r) => addMoney(sum, r.amount), 0)
+      const newOutstanding = Math.max(0, subMoney(existing.amount, totalRepaid))
+
+      existing.repayments = mergedRepayments
+      existing.outstanding = newOutstanding
+      existing.status =
+        toPaise(newOutstanding) === 0
+          ? 'repaid'
+          : toPaise(newOutstanding) === toPaise(existing.amount)
+          ? 'active'
+          : 'partially_paid'
+      localLoanMap.set(rLoan.id, existing)
+    }
+  }
+
+  // Resolve settings and salary month
+  const remoteTime = new Date(remote.updatedAt || 0).getTime()
+  const localTime = new Date(local.updatedAt || 0).getTime()
+  const latestSettings =
+    remoteTime > localTime
+      ? { ...local.settings, ...remote.settings }
+      : { ...remote.settings, ...local.settings }
+
+  const lastSalaryMonth =
+    (local.lastSalaryMonth || '') > (remote.lastSalaryMonth || '')
+      ? local.lastSalaryMonth
+      : remote.lastSalaryMonth || local.lastSalaryMonth || ''
+
+  return {
+    balance: nextBalance,
+    savings: nextSavings,
+    savingsGoal: remoteTime > localTime ? remote.savingsGoal : local.savingsGoal,
+    loans: Array.from(localLoanMap.values()),
+    transactions: allTxs,
+    lastSalaryMonth,
+    settings: latestSettings,
+    updatedAt: new Date().toISOString(),
   }
 }

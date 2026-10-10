@@ -8,7 +8,7 @@
  * 4. Transparent sync status indicators: 'synced' | 'saving' | 'offline' | 'pending' | 'error'.
  */
 
-import { normalizeState } from '../domain/accounting'
+import { normalizeState, reconcileStates } from '../domain/accounting'
 import { forcePushToCloud, fetchFreshFromServer, subscribeUserData } from '../firebase'
 
 export class SyncManager {
@@ -163,17 +163,16 @@ export class SyncManager {
           return
         }
 
-        // If local has pending unsaved mutations, do NOT overwrite them with stale server data!
+        // If local has pending unsaved mutations, reconcile without discarding either side!
         if (this.hasPendingChanges()) {
           const pending = this.getPendingQueue()
-          const remoteTime = new Date(remoteData.updatedAt || 0).getTime()
-          const localTime = new Date(pending.updatedAt || 0).getTime()
-
-          if (localTime >= remoteTime) {
-            // Local is newer: re-push local state to server to reconcile
-            this.flushPendingSync()
-            return
+          const merged = reconcileStates(pending, remoteData)
+          this.setPendingQueue(merged)
+          this.flushPendingSync(merged)
+          if (this.onStateUpdated) {
+            this.onStateUpdated(merged)
           }
+          return
         }
 
         // Remote data is confirmed: normalize and notify UI

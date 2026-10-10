@@ -195,35 +195,14 @@ export default function App() {
         }
       })
     },
-    [authUser, showToast]
+    [authUser?.uid, showToast]
   )
 
-  // ─── Firebase Auth & Isolated Sync Setup ────────────────────
+  // ─── Firebase Auth Initialization ─────────────────────────
   useEffect(() => {
-    let syncMgr = null
-
     initializeAuth()
       .then((user) => {
         setAuthUser(user)
-        const uid = user?.uid || 'anonymous_local'
-        const initial = loadInitialState(uid)
-        setState(initial)
-
-        syncMgr = new SyncManager(
-          uid,
-          (remoteState) => {
-            setState(remoteState)
-            persistScopedState(uid, remoteState)
-          },
-          (status) => {
-            setCloudStatus(status)
-          }
-        )
-        syncManagerRef.current = syncMgr
-
-        syncMgr.startListening(() => {
-          markDataLoaded()
-        })
       })
       .catch((err) => {
         console.warn('Auth initialization fallback:', err)
@@ -231,9 +210,7 @@ export default function App() {
       })
 
     const unsubscribeAuth = subscribeAuthState((user) => {
-      if (user) {
-        setAuthUser(user)
-      }
+      setAuthUser(user)
     })
 
     // Timeout safety: unblock UI after 3.5s if Firestore is slow
@@ -244,9 +221,52 @@ export default function App() {
     return () => {
       clearTimeout(safetyTimer)
       unsubscribeAuth()
-      if (syncMgr) syncMgr.destroy()
     }
   }, [markDataLoaded])
+
+  // ─── Isolated Sync & Multi-Tab Synchronization per UID ─────
+  useEffect(() => {
+    const uid = authUser?.uid || 'anonymous_local'
+    const initial = loadInitialState(uid)
+    setState(initial)
+
+    const syncMgr = new SyncManager(
+      uid,
+      (remoteState) => {
+        setState(remoteState)
+        persistScopedState(uid, remoteState)
+      },
+      (status) => {
+        setCloudStatus(status)
+      }
+    )
+    syncManagerRef.current = syncMgr
+
+    syncMgr.startListening(() => {
+      markDataLoaded()
+    })
+
+    // Synchronize across multiple browser tabs
+    const handleStorageChange = (e) => {
+      if (e.key === getScopedStorageKey(uid) && e.newValue) {
+        try {
+          const freshLocal = normalizeState(JSON.parse(e.newValue))
+          setState(freshLocal)
+        } catch (err) {
+          console.warn('Failed parsing multi-tab storage update:', err)
+        }
+      }
+    }
+    window.addEventListener('storage', handleStorageChange)
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange)
+      syncMgr.destroy()
+      if (syncManagerRef.current === syncMgr) {
+        syncManagerRef.current = null
+      }
+    }
+  }, [authUser?.uid, markDataLoaded])
 
   // ─── Idempotent Monthly Salary Processing ───────────────────
   useEffect(() => {
