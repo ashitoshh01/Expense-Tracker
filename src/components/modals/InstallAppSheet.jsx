@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Smartphone, Download } from 'lucide-react'
+import { Modal, Button } from '../ui'
 
 export default function InstallAppSheet({ installPrompt, isInstalled, onClose, onInstallSuccess }) {
   const [installing, setInstalling] = useState(false)
@@ -23,13 +24,7 @@ export default function InstallAppSheet({ installPrompt, isInstalled, onClose, o
   }
 
   return (
-    <div className="bottom-sheet active">
-      <div className="sheet-handle" />
-      <div className="sheet-title">
-        <Smartphone size={24} />
-        App Shortcut & Icon
-      </div>
-
+    <Modal title="App Shortcut & Icon" icon={Smartphone} onClose={onClose}>
       <div className="install-sheet-content">
         <div className="install-app-preview">
           <img src="/apple-touch-icon.png" alt="Wallet FIX App Icon" className="install-preview-img" />
@@ -42,16 +37,18 @@ export default function InstallAppSheet({ installPrompt, isInstalled, onClose, o
         </p>
 
         {installPrompt ? (
-          <button
-            className="btn-submit indigo"
+          <Button
+            variant="primary"
+            size="lg"
+            fullWidth
             onClick={handleInstallClick}
             disabled={installing}
+            loading={installing}
+            icon={Download}
             style={{ marginBottom: '16px' }}
-            type="button"
           >
-            <Download size={18} style={{ marginRight: '8px', verticalAlign: 'middle' }} />
             {installing ? 'Installing...' : 'Add Shortcut to Device'}
-          </button>
+          </Button>
         ) : isInstalled ? (
           <div className="install-info-box success" style={{ marginBottom: '16px' }}>
             ✓ Application shortcut is active on this device!
@@ -79,6 +76,6 @@ export default function InstallAppSheet({ installPrompt, isInstalled, onClose, o
           </div>
         )}
       </div>
-    </div>
+    </Modal>
   )
 }

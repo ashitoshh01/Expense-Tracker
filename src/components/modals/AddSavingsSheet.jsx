@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
-import { PiggyBank, Wallet, AlertCircle } from 'lucide-react'
+import { PiggyBank } from 'lucide-react'
 import { formatAmount } from '../../domain/money'
+import { Modal, Input, Button } from '../ui'
 
 export default function AddSavingsSheet({ maxAmount, onSubmit, onClose }) {
   const [amount, setAmount] = useState('')
@@ -26,37 +27,25 @@ export default function AddSavingsSheet({ maxAmount, onSubmit, onClose }) {
   }
 
   return (
-    <div className="bottom-sheet active">
-      <div className="sheet-handle" />
-      <div className="sheet-title">
-        <PiggyBank size={24} />
-        Add to Savings
-      </div>
+    <Modal title="Add to Savings" icon={PiggyBank} onClose={onClose}>
       <form onSubmit={handleSubmit}>
-        <div className="add-savings-info">
-          <Wallet size={16} />
-          Available cash balance: ₹{formatAmount(maxAmount)}
-        </div>
-        <div className="form-group">
-          <label className="form-label" htmlFor="savings-amount">Amount (₹)</label>
-          <input
-            ref={amountRef}
-            id="savings-amount"
-            className={`form-input ${errors.amount ? 'error' : ''}`}
-            type="number"
-            inputMode="decimal"
-            placeholder="e.g. 200"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-          />
-          {errors.amount && (
-            <div className="form-error"><AlertCircle size={14} /> {errors.amount}</div>
-          )}
-        </div>
-        <button className="btn-submit indigo" type="submit">
+        <Input
+          ref={amountRef}
+          id="savings-amount"
+          label={`Deposit Amount (₹)`}
+          hint={`Available cash balance: ₹${formatAmount(maxAmount)}`}
+          prefix="₹"
+          type="number"
+          inputMode="decimal"
+          placeholder="e.g. 200"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          error={errors.amount}
+        />
+        <Button variant="primary" size="lg" fullWidth type="submit">
           Save ₹{amount && Number(amount) > 0 ? formatAmount(Number(amount)) : '0'}
-        </button>
+        </Button>
       </form>
-    </div>
+    </Modal>
   )
 }

@@ -1,4 +1,5 @@
-import { HelpCircle, ShieldCheck, PiggyBank, Landmark, Cloud, Smartphone } from 'lucide-react'
+import { HelpCircle, ShieldCheck, PiggyBank, Landmark, Cloud } from 'lucide-react'
+import { Modal, Card, Button } from '../ui'
 
 export default function HelpSheet({ onClose }) {
   const faqs = [
@@ -25,41 +26,37 @@ export default function HelpSheet({ onClose }) {
   ]
 
   return (
-    <div className="bottom-sheet active" style={{ maxHeight: '85dvh' }}>
-      <div className="sheet-handle" />
-      <div className="sheet-title">
-        <HelpCircle size={24} />
-        Help & Support
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 20 }}>
+    <Modal title="Help & Support" icon={HelpCircle} onClose={onClose}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 }}>
         {faqs.map((faq, idx) => {
           const Icon = faq.icon
           return (
-            <div
-              key={idx}
-              style={{
-                background: 'var(--bg)',
-                padding: '14px 16px',
-                borderRadius: 12,
-                border: '1px solid var(--border)',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: 14, marginBottom: 6, color: 'var(--text-primary)' }}>
-                <Icon size={16} color="var(--accent)" />
+            <Card key={idx} variant="flat" padding="sm">
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  fontWeight: 700,
+                  fontSize: 14,
+                  marginBottom: 6,
+                  color: 'var(--wf-text-primary)',
+                }}
+              >
+                <Icon size={16} color="var(--wf-brand-500)" />
                 {faq.q}
               </div>
-              <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+              <div style={{ fontSize: 13, color: 'var(--wf-text-secondary)', lineHeight: 1.5 }}>
                 {faq.a}
               </div>
-            </div>
+            </Card>
           )
         })}
       </div>
 
-      <button className="btn-submit indigo" onClick={onClose} type="button">
+      <Button variant="primary" size="lg" fullWidth onClick={onClose}>
         Close Help
-      </button>
-    </div>
+      </Button>
+    </Modal>
   )
 }

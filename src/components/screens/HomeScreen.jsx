@@ -1,16 +1,48 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import {
-  Plus, Minus, Wallet, TrendingUp, TrendingDown, Eye,
-  Cloud, CloudCheck, CloudOff, RefreshCw, Calendar, ChevronRight, ExternalLink, Edit2
+  Plus,
+  Minus,
+  Wallet,
+  TrendingUp,
+  TrendingDown,
+  Eye,
+  EyeOff,
+  Cloud,
+  CloudCheck,
+  CloudOff,
+  RefreshCw,
+  Calendar,
+  ChevronRight,
+  ExternalLink,
+  Edit2,
+  ArrowDownLeft,
+  ArrowUpRight,
+  PiggyBank,
+  Landmark,
+  Receipt,
+  CheckCircle2,
+  AlertTriangle,
 } from 'lucide-react'
 import { formatAmount } from '../../domain/money'
+import { getCategoryMeta } from '../../domain/categories'
 import TransactionItem from './TransactionItem'
+import { Card, Button, Badge, SectionHeader, EmptyState } from '../ui'
 
 const getGreeting = () => {
   const h = new Date().getHours()
-  if (h < 12) return 'Good morning,'
-  if (h < 17) return 'Good afternoon,'
-  return 'Good evening,'
+  if (h < 12) return 'Good morning'
+  if (h < 17) return 'Good afternoon'
+  return 'Good evening'
+}
+
+const getFormattedDate = () => {
+  const d = new Date()
+  return d.toLocaleDateString('en-IN', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  })
 }
 
 const getShortMonth = () => {
@@ -18,6 +50,9 @@ const getShortMonth = () => {
   return d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })
 }
 
+/**
+ * Backward-compatible MonthlySummary component
+ */
 export function MonthlySummary({ earned, spent }) {
   return (
     <div className="month-card">
@@ -57,13 +92,13 @@ export function MonthlySummary({ earned, spent }) {
 
 export default function HomeScreen({
   state,
-  monthlyEarned,
-  monthlySpent,
-  balanceChangePercent,
+  monthlyEarned = 0,
+  monthlySpent = 0,
+  balanceChangePercent = { label: '0%', isPositive: true },
   onNavigate,
   onAddMoney,
   onAddExpense,
-  cloudStatus,
+  cloudStatus = 'synced',
   onCloudClick,
   onRetryCloud,
   authUser,
@@ -71,27 +106,179 @@ export default function HomeScreen({
 }) {
   const [editingName, setEditingName] = useState(false)
   const [nameInput, setNameInput] = useState(authUser?.displayName || '')
-  const recentTxs = state.transactions.slice(0, 5)
+  const [showBalance, setShowBalance] = useState(() => {
+    try {
+      return localStorage.getItem('wf_show_balance') !== 'false'
+    } catch {
+      return true
+    }
+  })
 
-  const greetingName = authUser?.displayName?.trim() || authUser?.email?.split('@')[0] || 'Friend'
+  const toggleShowBalance = () => {
+    setShowBalance((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem('wf_show_balance', String(next))
+      } catch {}
+      return next
+    })
+  }
+
+  const transactions = state?.transactions || []
+  const recentTxs = transactions.slice(0, 5)
+
+  const greetingName =
+    authUser?.displayName?.trim() || authUser?.email?.split('@')[0] || 'Friend'
+
   const avatarInitials = authUser?.displayName
     ? authUser.displayName.slice(0, 2).toUpperCase()
     : authUser?.email
     ? authUser.email.slice(0, 2).toUpperCase()
     : 'U'
 
+  // Current Month category-wise spending
+  const currentMonthPrefix = useMemo(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  }, [])
+
+  const categorySpending = useMemo(() => {
+    if (!transactions.length) return []
+
+    const monthExpenses = transactions.filter(
+      (t) =>
+        t.date &&
+        t.date.startsWith(currentMonthPrefix) &&
+        (t.type === 'spent' || t.type === 'expense')
+    )
+
+    if (monthExpenses.length === 0) return []
+
+    const map = {}
+    let total = 0
+
+    for (const t of monthExpenses) {
+      const amt = Number(t.amount) || 0
+      if (amt <= 0) continue
+      const cat = t.category || 'Other'
+      map[cat] = (map[cat] || 0) + amt
+      total += amt
+    }
+
+    if (total <= 0) return []
+
+    return Object.entries(map)
+      .map(([category, amount]) => {
+        const meta = getCategoryMeta(category)
+        return {
+          category,
+          amount,
+          percentage: Math.round((amount / total) * 100),
+          color: meta.color || '#6366F1',
+          icon: meta.icon,
+        }
+      })
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 4)
+  }, [transactions, currentMonthPrefix])
+
+  // Active loans metric
+  const activeLoans = useMemo(() => {
+    const loans = state?.loans || []
+    return loans.filter((l) => l.status !== 'repaid' && Number(l.outstanding) > 0)
+  }, [state?.loans])
+
+  const totalOutstandingDebt = useMemo(() => {
+    return activeLoans
+      .filter((l) => l.type !== 'lent')
+      .reduce((sum, l) => sum + (Number(l.outstanding) || 0), 0)
+  }, [activeLoans])
+
+  // Net monthly cash flow
+  const netCashFlow = monthlyEarned - monthlySpent
+  const isSpendingHealthy = monthlyEarned >= monthlySpent
+
   return (
-    <div className="screen">
-      {/* Header */}
-      <div className="mobile-header">
-        <div className="header-brand" onClick={() => onNavigate('more')} role="button" aria-label="Wallet FIX">
-          <img src="/apple-touch-icon.png" alt="Wallet FIX" className="header-brand-logo" />
-          <div className="header-brand-title">
-            <span className="brand-name-wallet">Wallet</span>
-            <span className="brand-name-fix">FIX</span>
-          </div>
+    <div className="screen wf-dashboard">
+      {/* ── Top Header ── */}
+      <header className="wf-dash-top">
+        <div className="wf-dash-greeting-wrap">
+          <span className="wf-dash-date">{getFormattedDate()}</span>
+          {editingName ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                if (nameInput.trim() && onUpdateName) {
+                  onUpdateName(nameInput.trim())
+                }
+                setEditingName(false)
+              }}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '4px 0' }}
+            >
+              <input
+                type="text"
+                autoFocus
+                value={nameInput}
+                onChange={(e) => setNameInput(e.target.value)}
+                placeholder="Your name"
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 8,
+                  border: '1.5px solid var(--wf-brand-500)',
+                  fontSize: '1rem',
+                  fontWeight: 700,
+                  background: 'var(--wf-surface)',
+                  color: 'var(--wf-text-primary)',
+                  outline: 'none',
+                  maxWidth: 180,
+                }}
+              />
+              <Button type="submit" size="sm" variant="primary">
+                Save
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setEditingName(false)}
+              >
+                Cancel
+              </Button>
+            </form>
+          ) : (
+            <h1 className="wf-dash-title">
+              <span>
+                {getGreeting()}, {greetingName} 👋
+              </span>
+              {onUpdateName && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNameInput(authUser?.displayName || '')
+                    setEditingName(true)
+                  }}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    padding: 4,
+                    cursor: 'pointer',
+                    color: 'var(--wf-text-muted)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    opacity: 0.7,
+                  }}
+                  title="Edit display name"
+                  aria-label="Edit display name"
+                >
+                  <Edit2 size={15} />
+                </button>
+              )}
+            </h1>
+          )}
         </div>
-        <div className="mobile-header-right">
+
+        <div className="wf-dash-actions">
+          {/* Cloud Sync Status */}
           <button
             className={`cloud-badge ${cloudStatus || 'synced'}`}
             onClick={onCloudClick}
@@ -118,11 +305,21 @@ export default function HomeScreen({
             {cloudStatus === 'permission_denied' && <CloudOff size={16} />}
             {cloudStatus === 'error' && <CloudOff size={16} />}
           </button>
-          <div className="header-avatar" onClick={() => onNavigate('more')} style={{ cursor: 'pointer' }}>
+
+          {/* Profile Avatar Shortcut */}
+          <div
+            className="header-avatar"
+            onClick={() => onNavigate('more')}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onNavigate('more')}
+            aria-label="Account profile and settings"
+            style={{ cursor: 'pointer' }}
+          >
             {avatarInitials}
           </div>
         </div>
-      </div>
+      </header>
 
       {/* Cloud Firestore Setup Notice if not created in Firebase console */}
       {cloudStatus === 'not_created' && (
@@ -133,16 +330,21 @@ export default function HomeScreen({
           </div>
           <div className="setup-banner-title">Activate Cloud Firestore Database</div>
           <p className="setup-banner-desc">
-            Your Firebase project <strong>expense-b7fcb</strong> is connected, but Cloud Firestore database has not been created yet in the Firebase Console.
+            Your Firebase project <strong>expense-b7fcb</strong> is connected, but Cloud Firestore
+            database has not been created yet in the Firebase Console.
           </p>
           <div className="setup-banner-steps">
             <div className="setup-step-row">
               <span className="setup-step-num">1</span>
-              <span>Open Firebase Console and click <strong>Create database</strong></span>
+              <span>
+                Open Firebase Console and click <strong>Create database</strong>
+              </span>
             </div>
             <div className="setup-step-row">
               <span className="setup-step-num">2</span>
-              <span>Choose <strong>Start in test mode</strong> and click Enable</span>
+              <span>
+                Choose <strong>Start in test mode</strong> and click Enable
+              </span>
             </div>
           </div>
           <div className="setup-banner-buttons">
@@ -161,183 +363,307 @@ export default function HomeScreen({
         </div>
       )}
 
-      {/* Greeting */}
-      <div className="greeting-section">
-        <div className="greeting-sub">{getGreeting()}</div>
-        {editingName ? (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-              if (nameInput.trim() && onUpdateName) {
-                onUpdateName(nameInput.trim())
-              }
-              setEditingName(false)
-            }}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '6px 0 8px' }}
+      {/* ── Primary Balance Hero ── */}
+      <Card variant="default" className="wf-hero-card">
+        <div className="wf-hero-top">
+          <div className="wf-hero-label">
+            <Wallet size={16} aria-hidden="true" />
+            <span>Available Balance</span>
+          </div>
+
+          <button
+            type="button"
+            className="wf-hero-eye-btn"
+            onClick={toggleShowBalance}
+            aria-label={showBalance ? 'Hide balance' : 'Show balance'}
+            title={showBalance ? 'Hide balance' : 'Show balance'}
           >
-            <input
-              type="text"
-              autoFocus
-              value={nameInput}
-              onChange={(e) => setNameInput(e.target.value)}
-              placeholder="Your name"
-              style={{
-                padding: '6px 12px',
-                borderRadius: 8,
-                border: '1.5px solid var(--accent)',
-                fontSize: '1.2rem',
-                fontWeight: 700,
-                background: 'var(--surface)',
-                color: 'var(--text-primary)',
-                outline: 'none',
-                maxWidth: 200,
-              }}
-            />
-            <button
-              type="submit"
-              style={{
-                padding: '6px 12px',
-                borderRadius: 8,
-                background: 'var(--accent)',
-                color: '#fff',
-                border: 'none',
-                fontWeight: 600,
-                fontSize: '0.85rem',
-                cursor: 'pointer',
-              }}
-            >
-              Save
-            </button>
-            <button
-              type="button"
-              onClick={() => setEditingName(false)}
-              style={{
-                padding: '6px 10px',
-                borderRadius: 8,
-                background: 'transparent',
-                border: '1px solid var(--border)',
-                color: 'var(--text-muted)',
-                fontSize: '0.85rem',
-                cursor: 'pointer',
-              }}
-            >
-              Cancel
-            </button>
-          </form>
-        ) : (
-          <div className="greeting-name" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span>{greetingName} 👋</span>
-            {onUpdateName && (
-              <button
-                type="button"
-                onClick={() => {
-                  setNameInput(authUser?.displayName || '')
-                  setEditingName(true)
-                }}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  padding: 4,
-                  cursor: 'pointer',
-                  color: 'var(--text-muted)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  opacity: 0.7,
-                }}
-                title="Edit name"
-                aria-label="Edit name"
-              >
-                <Edit2 size={16} />
-              </button>
-            )}
-          </div>
-        )}
-        <div className="greeting-message">Let's make today a great financial day!</div>
-      </div>
+            {showBalance ? <EyeOff size={14} /> : <Eye size={14} />}
+            <span>{showBalance ? 'Hide' : 'Show'}</span>
+          </button>
+        </div>
 
-      {/* Balance Card */}
-      <div className="balance-card">
-        <div className="balance-left">
-          <div className="balance-label">
-            <Eye size={14} />
-            Available Balance
+        <div className="wf-hero-amount-row">
+          <div
+            className={`wf-hero-amount ${state?.balance < 0 ? 'negative' : ''}`}
+            aria-label={`Available Balance: ₹${formatAmount(state?.balance || 0)}`}
+          >
+            <span className="wf-hero-rupee">₹</span>
+            {showBalance ? formatAmount(Math.abs(state?.balance || 0)) : '••••••'}
           </div>
-          <div className={`balance-amount ${state.balance < 0 ? 'negative' : ''}`}>
-            <span className="balance-rupee">₹</span>
-            {formatAmount(Math.abs(state.balance))}
+
+          <Badge
+            variant={balanceChangePercent.isPositive ? 'income' : 'expense'}
+            size="md"
+            icon={balanceChangePercent.isPositive ? TrendingUp : TrendingDown}
+          >
+            {balanceChangePercent.label} vs last month
+          </Badge>
+        </div>
+
+        {/* Dual Cash Flow Snapshot */}
+        <div className="wf-hero-cashflow-pills">
+          <div className="wf-hero-cashflow-item">
+            <span className="wf-hero-cashflow-label">Earned ({getShortMonth()})</span>
+            <span className="wf-hero-cashflow-val income">
+              {showBalance ? `+₹${formatAmount(monthlyEarned)}` : '••••••'}
+            </span>
           </div>
-          <div className={`balance-change ${balanceChangePercent.isPositive ? '' : 'negative-change'}`}>
-            {balanceChangePercent.isPositive ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
-            {balanceChangePercent.label} from last month
+          <div className="wf-hero-cashflow-item">
+            <span className="wf-hero-cashflow-label">Spent ({getShortMonth()})</span>
+            <span className="wf-hero-cashflow-val expense">
+              {showBalance ? `-₹${formatAmount(monthlySpent)}` : '••••••'}
+            </span>
+          </div>
+          <div className="wf-hero-cashflow-item">
+            <span className="wf-hero-cashflow-label">Net Cash Flow</span>
+            <span
+              className={`wf-hero-cashflow-val ${
+                netCashFlow >= 0 ? 'income' : 'expense'
+              }`}
+            >
+              {showBalance
+                ? `${netCashFlow >= 0 ? '+' : '-'}₹${formatAmount(Math.abs(netCashFlow))}`
+                : '••••••'}
+            </span>
           </div>
         </div>
-        <div className="balance-right">
-          <Wallet />
+
+        {/* Quick Action Button Duo */}
+        <div className="wf-hero-btn-row">
+          <Button
+            variant="income"
+            size="md"
+            icon={Plus}
+            onClick={onAddMoney}
+            fullWidth
+          >
+            Add Income
+          </Button>
+          <Button
+            variant="danger"
+            size="md"
+            icon={Minus}
+            onClick={onAddExpense}
+            fullWidth
+          >
+            Add Expense
+          </Button>
         </div>
-      </div>
+      </Card>
 
-      {/* Action Cards */}
-      <div className="action-cards">
-        <button className="action-card income" onClick={onAddMoney}>
-          <div className="action-card-icon">
-            <Plus />
-          </div>
-          <div>
-            <div className="action-card-title">Add Money</div>
-            <div className="action-card-sub">Income / Deposit</div>
-          </div>
-        </button>
-        <button className="action-card expense" onClick={onAddExpense}>
-          <div className="action-card-icon">
-            <Minus />
-          </div>
-          <div>
-            <div className="action-card-title">Add Expense</div>
-            <div className="action-card-sub">Track Spending</div>
-          </div>
-        </button>
-      </div>
-
-      {/* This Month */}
-      <MonthlySummary earned={monthlyEarned} spent={monthlySpent} />
-
-      {/* Quick Stats */}
-      <div className="quick-stats-section">
-        <div className="quick-stats-title">Quick Stats</div>
-        <div className="quick-stats-grid">
-          <div className="quick-stat-item">
-            <div className="quick-stat-label">Total Savings</div>
-            <div className="quick-stat-value green">₹{formatAmount(state.savings)}</div>
-          </div>
-          <div className="quick-stat-item">
-            <div className="quick-stat-label">Transactions</div>
-            <div className="quick-stat-value accent">{state.transactions.length}</div>
-          </div>
-          <div className="quick-stat-item">
-            <div className="quick-stat-label">Active Loans</div>
-            <div className="quick-stat-value">
-              {state.loans.filter((l) => l.status !== 'repaid' && l.outstanding > 0).length}
+      {/* ── Financial Overview Grid ── */}
+      <section className="wf-overview-grid" aria-label="Financial summary">
+        {/* Monthly Income Card */}
+        <div className="wf-stat-card">
+          <div className="wf-stat-top">
+            <span className="wf-stat-label">Income</span>
+            <div className="wf-stat-icon-wrap income" aria-hidden="true">
+              <ArrowDownLeft size={16} />
             </div>
           </div>
+          <div className="wf-stat-value">
+            {showBalance ? `₹${formatAmount(monthlyEarned)}` : '••••••'}
+          </div>
+          <div className="wf-stat-sub">This month's earnings</div>
         </div>
-      </div>
 
-      {/* Recent Transactions */}
-      {recentTxs.length > 0 && (
-        <div className="recent-section">
-          <div className="recent-header">
-            <div className="recent-title">Recent Transactions</div>
-            <button className="recent-view-all" onClick={() => onNavigate('transactions')}>
-              View All <ChevronRight size={14} />
-            </button>
+        {/* Monthly Expenses Card */}
+        <div className="wf-stat-card">
+          <div className="wf-stat-top">
+            <span className="wf-stat-label">Expenses</span>
+            <div className="wf-stat-icon-wrap expense" aria-hidden="true">
+              <ArrowUpRight size={16} />
+            </div>
           </div>
-          <div className="tx-list">
-            {recentTxs.map((tx) => (
-              <TransactionItem key={tx.id} tx={tx} />
-            ))}
+          <div className="wf-stat-value">
+            {showBalance ? `₹${formatAmount(monthlySpent)}` : '••••••'}
+          </div>
+          <div className="wf-stat-sub">This month's spend</div>
+        </div>
+
+        {/* Total Savings Card */}
+        <div
+          className="wf-stat-card interactive"
+          onClick={() => onNavigate('savings')}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onNavigate('savings')}
+          aria-label="View Savings Vault"
+        >
+          <div className="wf-stat-top">
+            <span className="wf-stat-label">Savings</span>
+            <div className="wf-stat-icon-wrap savings" aria-hidden="true">
+              <PiggyBank size={16} />
+            </div>
+          </div>
+          <div className="wf-stat-value">
+            {showBalance ? `₹${formatAmount(state?.savings || 0)}` : '••••••'}
+          </div>
+          <div className="wf-stat-sub">
+            {state?.savingsGoal > 0 ? (
+              <span>
+                {Math.min(
+                  100,
+                  Math.round(((state?.savings || 0) / state.savingsGoal) * 100)
+                )}
+                % of goal
+              </span>
+            ) : (
+              <span>In savings vault</span>
+            )}
+            <ChevronRight size={12} />
           </div>
         </div>
-      )}
+
+        {/* Active Debt / Loans Card */}
+        <div
+          className="wf-stat-card interactive"
+          onClick={() => onNavigate('loans')}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onNavigate('loans')}
+          aria-label="View Loans and Debt"
+        >
+          <div className="wf-stat-top">
+            <span className="wf-stat-label">Active Loans</span>
+            <div className="wf-stat-icon-wrap neutral" aria-hidden="true">
+              <Landmark size={16} />
+            </div>
+          </div>
+          <div className="wf-stat-value">
+            {activeLoans.length > 0
+              ? `${activeLoans.length} active`
+              : 'Zero debt 🎉'}
+          </div>
+          <div className="wf-stat-sub">
+            {totalOutstandingDebt > 0 ? (
+              <span>₹{formatAmount(totalOutstandingDebt)} borrowed</span>
+            ) : (
+              <span>All clear</span>
+            )}
+            <ChevronRight size={12} />
+          </div>
+        </div>
+      </section>
+
+      {/* ── Split Section: Recent Activity + Category Spending ── */}
+      <div className="wf-dash-split">
+        {/* Left Column: Recent Transactions */}
+        <section aria-label="Recent Transactions">
+          <SectionHeader
+            title="Recent Transactions"
+            action={
+              recentTxs.length > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconRight={ChevronRight}
+                  onClick={() => onNavigate('transactions')}
+                >
+                  View All
+                </Button>
+              )
+            }
+          />
+
+          {recentTxs.length === 0 ? (
+            <EmptyState
+              icon={Receipt}
+              title="No transactions yet"
+              description="Start tracking your finances by recording your first income or expense."
+              action={
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <Button variant="income" size="sm" onClick={onAddMoney}>
+                    Add Income
+                  </Button>
+                  <Button variant="danger" size="sm" onClick={onAddExpense}>
+                    Add Expense
+                  </Button>
+                </div>
+              }
+            />
+          ) : (
+            <div className="tx-list">
+              {recentTxs.map((tx) => (
+                <TransactionItem key={tx.id} tx={tx} />
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* Right Column: Spending Health & Top Categories */}
+        <section style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* Spending Health Indicator */}
+          <div
+            className={`wf-health-banner ${
+              isSpendingHealthy ? 'success' : 'warning'
+            }`}
+          >
+            {isSpendingHealthy ? (
+              <>
+                <CheckCircle2 size={16} aria-hidden="true" />
+                <span>You're spending less than you earn this month! 🎉</span>
+              </>
+            ) : (
+              <>
+                <AlertTriangle size={16} aria-hidden="true" />
+                <span>You're currently spending more than you earn!</span>
+              </>
+            )}
+          </div>
+
+          {/* Top Spending Categories */}
+          {categorySpending.length > 0 && (
+            <Card variant="default" padding="md">
+              <SectionHeader
+                title={`Top Spending (${getShortMonth()})`}
+                description="Where your money went this month"
+              />
+
+              <div className="wf-cat-breakdown">
+                {categorySpending.map((cat) => {
+                  const Icon = cat.icon
+                  return (
+                    <div key={cat.category} className="wf-cat-item">
+                      <div className="wf-cat-item-top">
+                        <div className="wf-cat-item-left">
+                          <span
+                            className="wf-cat-item-icon"
+                            style={{
+                              background: `${cat.color}18`,
+                              color: cat.color,
+                            }}
+                          >
+                            <Icon size={14} />
+                          </span>
+                          <span>{cat.category}</span>
+                        </div>
+                        <div className="wf-cat-item-right">
+                          <span className="wf-cat-amount">
+                            ₹{formatAmount(cat.amount)}
+                          </span>
+                          <span className="wf-cat-pct">({cat.percentage}%)</span>
+                        </div>
+                      </div>
+
+                      <div className="wf-cat-track" aria-hidden="true">
+                        <div
+                          className="wf-cat-bar"
+                          style={{
+                            width: `${cat.percentage}%`,
+                            background: cat.color,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </Card>
+          )}
+        </section>
+      </div>
     </div>
   )
 }

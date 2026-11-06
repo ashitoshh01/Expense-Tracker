@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
-import { ArrowDownToLine, AlertCircle } from 'lucide-react'
+import { ArrowDownToLine } from 'lucide-react'
 import { formatAmount } from '../../domain/money'
+import { Modal, Input, Button } from '../ui'
 
 export default function WithdrawSheet({ maxAmount, onSubmit, onClose }) {
   const [amount, setAmount] = useState('')
@@ -26,35 +27,24 @@ export default function WithdrawSheet({ maxAmount, onSubmit, onClose }) {
   }
 
   return (
-    <div className="bottom-sheet active">
-      <div className="sheet-handle" />
-      <div className="sheet-title">
-        <ArrowDownToLine size={24} />
-        Withdraw from Savings
-      </div>
+    <Modal title="Withdraw from Savings" icon={ArrowDownToLine} onClose={onClose}>
       <form onSubmit={handleSubmit}>
-        <div className="form-group">
-          <label className="form-label" htmlFor="withdraw-amount">
-            Amount (₹) — Available in Savings: ₹{formatAmount(maxAmount)}
-          </label>
-          <input
-            ref={amountRef}
-            id="withdraw-amount"
-            className={`form-input ${errors.amount ? 'error' : ''}`}
-            type="number"
-            inputMode="decimal"
-            placeholder={`Max ₹${formatAmount(maxAmount)}`}
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-          />
-          {errors.amount && (
-            <div className="form-error"><AlertCircle size={14} /> {errors.amount}</div>
-          )}
-        </div>
-        <button className="btn-submit indigo" type="submit">
+        <Input
+          ref={amountRef}
+          id="withdraw-amount"
+          label={`Amount (₹) — Available: ₹${formatAmount(maxAmount)}`}
+          prefix="₹"
+          type="number"
+          inputMode="decimal"
+          placeholder={`Max ₹${formatAmount(maxAmount)}`}
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          error={errors.amount}
+        />
+        <Button variant="primary" size="lg" fullWidth type="submit">
           Withdraw ₹{amount && Number(amount) > 0 ? formatAmount(Number(amount)) : '0'}
-        </button>
+        </Button>
       </form>
-    </div>
+    </Modal>
   )
 }

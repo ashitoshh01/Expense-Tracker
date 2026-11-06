@@ -37,11 +37,13 @@ import { formatAmount } from './domain/money'
 import AuthScreen from './components/screens/AuthScreen'
 import HomeScreen from './components/screens/HomeScreen'
 import TransactionsScreen from './components/screens/TransactionsScreen'
+import AnalyticsScreen from './components/screens/AnalyticsScreen'
 import AddTransactionScreen from './components/screens/AddTransactionScreen'
 import SavingsScreen from './components/screens/SavingsScreen'
 import LoansScreen from './components/screens/LoansScreen'
 import MoreScreen from './components/screens/MoreScreen'
 import BottomNavigation from './components/layout/BottomNavigation'
+import SidebarNavigation from './components/layout/SidebarNavigation'
 
 // Modals
 import AddSheet from './components/modals/AddSheet'
@@ -696,8 +698,17 @@ export default function App() {
   // ─── Render Screens ─────────────────────────────────────────
   return (
     <>
-      <div className="app-container">
-        {screen === 'home' && (
+      <div className="app-layout">
+        {/* Desktop Sidebar Navigation */}
+        <SidebarNavigation
+          active={screen}
+          onNavigate={setScreen}
+          authUser={authUser}
+        />
+
+        <div className="app-main">
+          <div className="app-container">
+            {screen === 'home' && (
           <HomeScreen
             state={state}
             monthlyEarned={currentMonthData.externalIncome}
@@ -724,6 +735,13 @@ export default function App() {
             }}
           />
         )}
+        {screen === 'analytics' && (
+          <AnalyticsScreen
+            transactions={state.transactions}
+            state={state}
+            onNavigate={setScreen}
+          />
+        )}
         {screen === 'addTx' && (
           <AddTransactionScreen
             onSubmit={handleAddTransaction}
@@ -743,6 +761,7 @@ export default function App() {
         {screen === 'loans' && (
           <LoansScreen
             loans={state.loans}
+            transactions={state.transactions}
             onRepaid={(loan) => {
               setActiveLoanForRepay(loan)
               setModal('repayLoan')
@@ -768,9 +787,11 @@ export default function App() {
             onUpdateName={handleUpdateUserName}
           />
         )}
+          </div>
+        </div>
       </div>
 
-      {/* Bottom Navigation */}
+      {/* Bottom Navigation — mobile only, hidden on desktop via CSS */}
       {screen !== 'addTx' && (
         <BottomNavigation active={screen} onNavigate={setScreen} />
       )}
