@@ -19,6 +19,45 @@ export const DEFAULT_SETTINGS = {
 }
 
 /**
+ * Prune deletion tombstones to bound memory and storage while preserving
+ * synchronization safety across long offline periods.
+ * Retention: keeps all tombstones within maxAgeDays (default 90 days),
+ * but always preserves at least minKeep (default 500) most recent tombstones.
+ *
+ * @param {Object} tombstones Object mapping ID to ISO timestamp string
+ * @param {Object} [options]
+ * @param {number} [options.maxAgeDays=90]
+ * @param {number} [options.minKeep=500]
+ * @returns {Object} Pruned tombstones object
+ */
+export function pruneTombstones(tombstones, { maxAgeDays = 90, minKeep = 500 } = {}) {
+  if (!tombstones || typeof tombstones !== 'object' || Array.isArray(tombstones)) {
+    return {}
+  }
+  const entries = Object.entries(tombstones)
+  if (entries.length <= minKeep) {
+    return { ...tombstones }
+  }
+
+  const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000
+  // Sort descending by timestamp so newest are first
+  entries.sort((a, b) => {
+    const timeA = new Date(a[1] || 0).getTime()
+    const timeB = new Date(b[1] || 0).getTime()
+    return timeB - timeA
+  })
+
+  const pruned = {}
+  entries.forEach(([id, timestamp], index) => {
+    const time = new Date(timestamp || 0).getTime()
+    if (index < minKeep || time > cutoff) {
+      pruned[id] = timestamp
+    }
+  })
+  return pruned
+}
+
+/**
  * Normalizes and validates raw or legacy state into a consistent financial state.
  * Fully backward-compatible with legacy storage formats.
  * @param {Object} raw
@@ -26,10 +65,10 @@ export const DEFAULT_SETTINGS = {
  */
 export function normalizeState(raw = {}) {
   const numBalance = Number(raw.balance)
-  const balance = Number.isFinite(numBalance) ? numBalance : 0
+  const balance = Number.isFinite(numBalance) ? toRupees(toPaise(numBalance)) : 0
 
   const numSavings = Number(raw.savings)
-  const savings = Number.isFinite(numSavings) ? numSavings : 0
+  const savings = Number.isFinite(numSavings) ? Math.max(0, toRupees(toPaise(numSavings))) : 0
 
   const numGoal = Number(raw.savingsGoal)
   const savingsGoal = Number.isFinite(numGoal) && numGoal > 0 ? numGoal : 0
@@ -39,19 +78,21 @@ export function normalizeState(raw = {}) {
   const rawLoans = Array.isArray(raw.loans) ? raw.loans : []
   const loans = rawLoans.map((l) => {
     const numAmt = Number(l.amount)
-    const originalAmount = Number.isFinite(numAmt) ? numAmt : 0
+    const originalAmount = Number.isFinite(numAmt) ? toRupees(toPaise(numAmt)) : 0
     const repayments = Array.isArray(l.repayments)
       ? l.repayments.map((r) => ({
           ...r,
-          amount: Number.isFinite(Number(r.amount)) ? Number(r.amount) : 0,
+          amount: Number.isFinite(Number(r.amount)) ? toRupees(toPaise(Number(r.amount))) : 0,
         }))
       : []
     const totalRepaid = repayments.reduce((sum, r) => addMoney(sum, r.amount), 0)
+    const computedOutstanding = Math.max(0, subMoney(originalAmount, totalRepaid))
     const numOutstanding = Number(l.outstanding)
-    const outstanding = Number.isFinite(numOutstanding)
-      ? numOutstanding
-      : Math.max(0, subMoney(originalAmount, totalRepaid))
-    const status = l.status || (outstanding <= 0 ? 'repaid' : totalRepaid > 0 ? 'partially_paid' : 'active')
+    const outstanding =
+      repayments.length > 0 || !Number.isFinite(numOutstanding) || numOutstanding < 0 || numOutstanding > originalAmount
+        ? computedOutstanding
+        : toRupees(toPaise(numOutstanding))
+    const status = toPaise(outstanding) === 0 ? 'repaid' : toPaise(outstanding) === toPaise(originalAmount) ? 'active' : 'partially_paid'
     const type = l.type === 'lent' ? 'lent' : 'borrowed'
 
     return {
@@ -72,7 +113,7 @@ export function normalizeState(raw = {}) {
   const rawTxs = Array.isArray(raw.transactions) ? raw.transactions : []
   const transactions = rawTxs.map((t) => {
     const numTxAmt = Number(t.amount)
-    const txAmount = Number.isFinite(numTxAmt) ? numTxAmt : 0
+    const txAmount = Number.isFinite(numTxAmt) ? toRupees(toPaise(numTxAmt)) : 0
     return {
       id: t.id || genId(),
       type: t.type || 'spent',
@@ -82,6 +123,8 @@ export function normalizeState(raw = {}) {
       date: t.date || new Date().toISOString().split('T')[0],
       loanId: t.loanId || undefined,
       repaymentId: t.repaymentId || undefined,
+      linkedTxId: t.linkedTxId || undefined,
+      sourceId: t.sourceId || undefined,
       reversalOf: t.reversalOf || undefined,
       isReversed: Boolean(t.isReversed),
       createdAt: t.createdAt || new Date().toISOString(),
@@ -124,18 +167,32 @@ export function normalizeState(raw = {}) {
   }
 
   const recurringIncomeHistory =
-    typeof raw.recurringIncomeHistory === 'object' && raw.recurringIncomeHistory !== null
+    typeof raw.recurringIncomeHistory === 'object' && raw.recurringIncomeHistory !== null && !Array.isArray(raw.recurringIncomeHistory)
       ? { ...raw.recurringIncomeHistory }
       : {}
 
+  const rawDeletedTxIds =
+    typeof raw.deletedTxIds === 'object' && raw.deletedTxIds !== null && !Array.isArray(raw.deletedTxIds)
+      ? raw.deletedTxIds
+      : {}
+  const rawDeletedLoanIds =
+    typeof raw.deletedLoanIds === 'object' && raw.deletedLoanIds !== null && !Array.isArray(raw.deletedLoanIds)
+      ? raw.deletedLoanIds
+      : {}
+
+  const deletedTxIds = pruneTombstones(rawDeletedTxIds)
+  const deletedLoanIds = pruneTombstones(rawDeletedLoanIds)
+
   return {
-    balance: balance,
-    savings: Math.max(0, savings),
+    balance,
+    savings,
     loans,
     transactions,
     savingsGoal,
     lastSalaryMonth,
     recurringIncomeHistory,
+    deletedTxIds,
+    deletedLoanIds,
     settings,
     version: SCHEMA_VERSION,
     updatedAt: raw.updatedAt || new Date().toISOString(),
@@ -401,27 +458,65 @@ export function deleteTransaction(state, txId) {
   const amt = tx.amount
 
   const txType = tx.type
+  let linkedTxToRemove = null
+  let severLinkedTxId = null
+  let deletedLoanId = null
+
+  // Check if this transaction is linked to another transaction (e.g., auto-saved recurring income)
+  const linkedTx = tx.linkedTxId ? state.transactions.find((t) => t.id === tx.linkedTxId) : null
 
   if (txType === 'income' || txType === 'salary' || (txType === 'add' && tx.category !== 'Loan')) {
-    // Reversing income reduces balance
-    if (toPaise(nextBalance) < toPaise(amt)) {
-      throw new Error(`Cannot delete income: current balance (₹${nextBalance.toFixed(2)}) is less than transaction amount ₹${amt.toFixed(2)}`)
+    if (linkedTx && (linkedTx.type === 'savings_deposit' || linkedTx.type === 'auto_save')) {
+      // Compound recurring income reversal with auto-save leg
+      const savedAmt = linkedTx.amount
+      const netCashCredited = subMoney(amt, savedAmt)
+
+      if (toPaise(nextBalance) < toPaise(netCashCredited)) {
+        throw new Error(
+          `Cannot delete recurring income: current balance (₹${nextBalance.toFixed(2)}) is less than net credited cash ₹${netCashCredited.toFixed(2)}`
+        )
+      }
+      if (toPaise(nextSavings) < toPaise(savedAmt)) {
+        throw new Error(
+          `Cannot delete recurring income: savings balance (₹${nextSavings.toFixed(2)}) is less than auto-saved amount ₹${savedAmt.toFixed(2)}`
+        )
+      }
+
+      nextBalance = subMoney(nextBalance, netCashCredited)
+      nextSavings = subMoney(nextSavings, savedAmt)
+      linkedTxToRemove = linkedTx
+    } else {
+      // Regular income reversal reduces cash balance
+      if (toPaise(nextBalance) < toPaise(amt)) {
+        throw new Error(
+          `Cannot delete income: current balance (₹${nextBalance.toFixed(2)}) is less than transaction amount ₹${amt.toFixed(2)}`
+        )
+      }
+      nextBalance = subMoney(nextBalance, amt)
     }
-    nextBalance = subMoney(nextBalance, amt)
   } else if (txType === 'spent' || txType === 'expense') {
     // Reversing expense refunds balance
     nextBalance = addMoney(nextBalance, amt)
   } else if (txType === 'savings_deposit' || txType === 'auto_save') {
-    // Reversing savings deposit: refund cash, reduce savings
     if (toPaise(nextSavings) < toPaise(amt)) {
-      throw new Error(`Cannot delete savings deposit: savings balance (₹${nextSavings.toFixed(2)}) is less than deposit amount ₹${amt.toFixed(2)}`)
+      throw new Error(
+        `Cannot delete savings deposit: savings balance (₹${nextSavings.toFixed(2)}) is less than deposit amount ₹${amt.toFixed(2)}`
+      )
     }
+    // Reversing savings deposit: refund cash, reduce savings
     nextSavings = subMoney(nextSavings, amt)
     nextBalance = addMoney(nextBalance, amt)
+
+    // If this was an auto-save leg linked to a salary/income, unlink it so parent income can still be deleted later independently
+    if (linkedTx && (linkedTx.type === 'income' || linkedTx.type === 'salary')) {
+      severLinkedTxId = linkedTx.id
+    }
   } else if (txType === 'savings_withdraw') {
     // Reversing savings withdrawal: refund savings, reduce cash
     if (toPaise(nextBalance) < toPaise(amt)) {
-      throw new Error(`Cannot delete savings withdrawal: cash balance (₹${nextBalance.toFixed(2)}) is less than withdrawal amount ₹${amt.toFixed(2)}`)
+      throw new Error(
+        `Cannot delete savings withdrawal: cash balance (₹${nextBalance.toFixed(2)}) is less than withdrawal amount ₹${amt.toFixed(2)}`
+      )
     }
     nextBalance = subMoney(nextBalance, amt)
     nextSavings = addMoney(nextSavings, amt)
@@ -429,19 +524,24 @@ export function deleteTransaction(state, txId) {
     // Reversing a loan repayment: refund cash, increase loan outstanding
     const loan = nextLoans.find((l) => l.id === tx.loanId)
     if (loan) {
-      const newOutstanding = addMoney(loan.outstanding, amt)
-      const repIndex = loan.repayments.findIndex((r) =>
-        (tx.repaymentId && r.id === tx.repaymentId) ||
-        (!tx.repaymentId && r.amount === amt && r.date === tx.date)
+      const repIndex = loan.repayments.findIndex(
+        (r) =>
+          (tx.repaymentId && r.id === tx.repaymentId) ||
+          (!tx.repaymentId && r.amount === amt && r.date === tx.date)
       )
-      const updatedRepayments = repIndex !== -1
-        ? loan.repayments.filter((_, idx) => idx !== repIndex)
-        : loan.repayments
+      const updatedRepayments = repIndex !== -1 ? loan.repayments.filter((_, idx) => idx !== repIndex) : loan.repayments
+      const totalRepaid = updatedRepayments.reduce((sum, r) => addMoney(sum, r.amount), 0)
+      const newOutstanding = Math.max(0, subMoney(loan.amount, totalRepaid))
 
       const updatedLoan = {
         ...loan,
         outstanding: newOutstanding,
-        status: toPaise(newOutstanding) === toPaise(loan.amount) ? 'active' : 'partially_paid',
+        status:
+          toPaise(newOutstanding) === toPaise(loan.amount)
+            ? 'active'
+            : toPaise(newOutstanding) === 0
+            ? 'repaid'
+            : 'partially_paid',
         repayments: updatedRepayments,
       }
       nextLoans = nextLoans.map((l) => (l.id === loan.id ? updatedLoan : l))
@@ -450,23 +550,30 @@ export function deleteTransaction(state, txId) {
   } else if (txType === 'loan_collection') {
     // Reversing loan collection: deduct collected cash from balance, increase loan outstanding
     if (toPaise(nextBalance) < toPaise(amt)) {
-      throw new Error(`Cannot delete loan collection: current balance (₹${nextBalance.toFixed(2)}) is less than collection amount ₹${amt.toFixed(2)}`)
+      throw new Error(
+        `Cannot delete loan collection: current balance (₹${nextBalance.toFixed(2)}) is less than collection amount ₹${amt.toFixed(2)}`
+      )
     }
     const loan = nextLoans.find((l) => l.id === tx.loanId)
     if (loan) {
-      const newOutstanding = addMoney(loan.outstanding, amt)
-      const repIndex = loan.repayments.findIndex((r) =>
-        (tx.repaymentId && r.id === tx.repaymentId) ||
-        (!tx.repaymentId && r.amount === amt && r.date === tx.date)
+      const repIndex = loan.repayments.findIndex(
+        (r) =>
+          (tx.repaymentId && r.id === tx.repaymentId) ||
+          (!tx.repaymentId && r.amount === amt && r.date === tx.date)
       )
-      const updatedRepayments = repIndex !== -1
-        ? loan.repayments.filter((_, idx) => idx !== repIndex)
-        : loan.repayments
+      const updatedRepayments = repIndex !== -1 ? loan.repayments.filter((_, idx) => idx !== repIndex) : loan.repayments
+      const totalRepaid = updatedRepayments.reduce((sum, r) => addMoney(sum, r.amount), 0)
+      const newOutstanding = Math.max(0, subMoney(loan.amount, totalRepaid))
 
       const updatedLoan = {
         ...loan,
         outstanding: newOutstanding,
-        status: toPaise(newOutstanding) === toPaise(loan.amount) ? 'active' : 'partially_paid',
+        status:
+          toPaise(newOutstanding) === toPaise(loan.amount)
+            ? 'active'
+            : toPaise(newOutstanding) === 0
+            ? 'repaid'
+            : 'partially_paid',
         repayments: updatedRepayments,
       }
       nextLoans = nextLoans.map((l) => (l.id === loan.id ? updatedLoan : l))
@@ -475,26 +582,71 @@ export function deleteTransaction(state, txId) {
   } else if (txType === 'loan_borrow' || (txType === 'add' && tx.category === 'Loan')) {
     // Reversing loan borrow: requires deducting borrowed cash from balance
     if (toPaise(nextBalance) < toPaise(amt)) {
-      throw new Error(`Cannot delete borrowed loan: current balance (₹${nextBalance.toFixed(2)}) is less than loan amount ₹${amt.toFixed(2)}`)
+      throw new Error(
+        `Cannot delete borrowed loan: current balance (₹${nextBalance.toFixed(2)}) is less than loan amount ₹${amt.toFixed(2)}`
+      )
     }
     // Check if repayments were made
-    const loan = nextLoans.find((l) => l.id === tx.loanId || (l.amount === amt && l.name === tx.note))
+    const loan = nextLoans.find(
+      (l) =>
+        (tx.loanId && l.id === tx.loanId) ||
+        (!tx.loanId &&
+          l.amount === amt &&
+          (l.name === tx.note ||
+            tx.note === `Borrowed from ${l.name}` ||
+            (typeof tx.note === 'string' && tx.note.includes(l.name))))
+    )
     if (loan && loan.repayments && loan.repayments.length > 0) {
       throw new Error(`Cannot delete loan that has existing repayments. Please reverse repayments first.`)
     }
     nextBalance = subMoney(nextBalance, amt)
     if (loan) {
+      deletedLoanId = loan.id
       nextLoans = nextLoans.filter((l) => l.id !== loan.id)
     }
   } else if (txType === 'loan_lend') {
-    const loan = nextLoans.find((l) => l.id === tx.loanId)
+    const loan = nextLoans.find(
+      (l) =>
+        (tx.loanId && l.id === tx.loanId) ||
+        (!tx.loanId &&
+          l.amount === amt &&
+          (l.name === tx.note ||
+            tx.note === `Lent money to ${l.name}` ||
+            (typeof tx.note === 'string' && tx.note.includes(l.name))))
+    )
     if (loan && loan.repayments && loan.repayments.length > 0) {
       throw new Error(`Cannot delete lent loan that has repayments.`)
     }
     nextBalance = addMoney(nextBalance, amt)
     if (loan) {
+      deletedLoanId = loan.id
       nextLoans = nextLoans.filter((l) => l.id !== loan.id)
     }
+  }
+
+  let remainingTransactions = state.transactions.filter(
+    (t) => t.id !== txId && (!linkedTxToRemove || t.id !== linkedTxToRemove.id)
+  )
+  if (severLinkedTxId) {
+    remainingTransactions = remainingTransactions.map((t) =>
+      t.id === severLinkedTxId ? { ...t, linkedTxId: undefined } : t
+    )
+  }
+
+  const nextDeletedTxIds = {
+    ...(state.deletedTxIds || {}),
+    [txId]: new Date().toISOString(),
+  }
+  if (linkedTxToRemove) {
+    nextDeletedTxIds[linkedTxToRemove.id] = new Date().toISOString()
+  }
+  if (tx.repaymentId) {
+    nextDeletedTxIds[tx.repaymentId] = new Date().toISOString()
+  }
+
+  const nextDeletedLoanIds = { ...(state.deletedLoanIds || {}) }
+  if (deletedLoanId) {
+    nextDeletedLoanIds[deletedLoanId] = new Date().toISOString()
   }
 
   return {
@@ -502,7 +654,9 @@ export function deleteTransaction(state, txId) {
     balance: nextBalance,
     savings: nextSavings,
     loans: nextLoans,
-    transactions: state.transactions.filter((t) => t.id !== txId),
+    transactions: remainingTransactions,
+    deletedTxIds: pruneTombstones(nextDeletedTxIds),
+    deletedLoanIds: pruneTombstones(nextDeletedLoanIds),
     updatedAt: new Date().toISOString(),
   }
 }
@@ -517,16 +671,55 @@ export function editTransaction(state, txId, updates) {
     throw new Error(`Transaction with ID "${txId}" not found`)
   }
 
+  const isLoanTx =
+    existingTx.type === 'loan_repayment' ||
+    existingTx.type === 'loan_collection' ||
+    existingTx.type === 'loan_borrow' ||
+    existingTx.type === 'loan_lend'
+
   // If amount or type changed, perform atomic rollback and re-apply
   const newAmount = updates.amount !== undefined ? validateAmount(updates.amount) : existingTx.amount
   const newCategory = updates.category !== undefined ? updates.category : existingTx.category
   const newNote = updates.note !== undefined ? updates.note : existingTx.note
   const newDate = updates.date !== undefined ? updates.date : existingTx.date
 
+  if (isLoanTx && (newAmount !== existingTx.amount || (updates.type && updates.type !== existingTx.type))) {
+    throw new Error('Editing the amount or type of a loan transaction is not supported. Please delete the transaction and re-enter it.')
+  }
+
+  if (existingTx.linkedTxId && newAmount !== existingTx.amount) {
+    throw new Error('Editing the amount of a linked recurring income transaction is not supported. Please delete the transaction to reverse it.')
+  }
+
   if (newAmount === existingTx.amount && (!updates.type || updates.type === existingTx.type)) {
     // Only metadata changed (note, category, date)
+    let nextLoans = state.loans
+    if ((existingTx.type === 'loan_repayment' || existingTx.type === 'loan_collection') && existingTx.loanId) {
+      nextLoans = state.loans.map((l) => {
+        if (l.id !== existingTx.loanId) return l
+        const updatedRepayments = (l.repayments || []).map((r) => {
+          const isMatch =
+            (existingTx.repaymentId && r.id === existingTx.repaymentId) ||
+            (!existingTx.repaymentId && r.amount === existingTx.amount && r.date === existingTx.date)
+          if (isMatch) {
+            return {
+              ...r,
+              date: newDate,
+              note: newNote,
+            }
+          }
+          return r
+        })
+        return {
+          ...l,
+          repayments: updatedRepayments,
+        }
+      })
+    }
+
     return {
       ...state,
+      loans: nextLoans,
       transactions: state.transactions.map((t) =>
         t.id === txId ? { ...t, category: newCategory, note: newNote, date: newDate } : t
       ),
@@ -679,25 +872,32 @@ export function processRecurringIncomesAutomation(state, { now = new Date(), for
     const autoSaveAmt = src.autoSaveAmount > 0 ? Math.min(amt, Number(src.autoSaveAmount)) : 0
     const netCashIncrease = subMoney(amt, autoSaveAmt)
 
+    const incomeTxId = genId()
+    const autoSaveTxId = autoSaveAmt > 0 ? genId() : null
+
     const incomeTx = {
-      id: genId(),
+      id: incomeTxId,
       type: src.category === 'Salary' ? 'salary' : 'income',
       category: src.category || 'Income',
       amount: amt,
       note: `${src.name || 'Monthly Income'} (Auto-Credit)`,
       date: todayStr,
+      sourceId: src.id,
+      linkedTxId: autoSaveTxId || undefined,
       createdAt: new Date().toISOString(),
     }
     newTransactions.push(incomeTx)
 
     if (autoSaveAmt > 0) {
       const autoSaveTx = {
-        id: genId(),
+        id: autoSaveTxId,
         type: 'savings_deposit',
         category: 'Savings',
         amount: autoSaveAmt,
         note: `Auto-saved from ${src.name || 'Income'}`,
         date: todayStr,
+        sourceId: src.id,
+        linkedTxId: incomeTxId,
         createdAt: new Date().toISOString(),
       }
       newTransactions.push(autoSaveTx)
@@ -735,25 +935,30 @@ export function processRecurringIncomesAutomation(state, { now = new Date(), for
       const autoSaveAmt = autoSaveEnabled ? Math.min(legacySalaryAmt, configuredAutoSave) : 0
       const netCashIncrease = subMoney(legacySalaryAmt, autoSaveAmt)
 
+      const salaryTxId = genId()
+      const autoSaveTxId = autoSaveAmt > 0 ? genId() : null
+
       const salaryTx = {
-        id: genId(),
+        id: salaryTxId,
         type: 'salary',
         category: 'Salary',
         amount: legacySalaryAmt,
         note: 'Monthly Salary Credit',
         date: todayStr,
+        linkedTxId: autoSaveTxId || undefined,
         createdAt: new Date().toISOString(),
       }
       newTransactions.push(salaryTx)
 
       if (autoSaveAmt > 0) {
         const autoSaveTx = {
-          id: genId(),
+          id: autoSaveTxId,
           type: 'savings_deposit',
           category: 'Savings',
           amount: autoSaveAmt,
           note: 'Auto-saved from salary',
           date: todayStr,
+          linkedTxId: salaryTxId,
           createdAt: new Date().toISOString(),
         }
         newTransactions.push(autoSaveTx)
@@ -814,7 +1019,7 @@ export function processSalaryAutomation(state, options = {}) {
  * 3. Merges loan repayment records by repayment ID and recomputes exact outstanding debt.
  * 4. Resolves metadata and settings timestamps without reverting user configurations.
  */
-export function reconcileStates(localState, remoteState) {
+export function reconcileStates(localState, remoteState, { lastSyncedAt = null } = {}) {
   if (!remoteState && !localState) return normalizeState({})
   if (!remoteState) return normalizeState(localState)
   if (!localState) return normalizeState(remoteState)
@@ -822,13 +1027,92 @@ export function reconcileStates(localState, remoteState) {
   const local = normalizeState(localState)
   const remote = normalizeState(remoteState)
 
-  const localTxMap = new Map((local.transactions || []).map((t) => [t.id, t]))
-  const remoteOnlyTxs = (remote.transactions || []).filter((t) => !localTxMap.has(t.id))
+  // Merge and prune tombstones across local and remote
+  const mergedDeletedTxIds = pruneTombstones({
+    ...(remote.deletedTxIds || {}),
+    ...(local.deletedTxIds || {}),
+  })
+  const mergedDeletedLoanIds = pruneTombstones({
+    ...(remote.deletedLoanIds || {}),
+    ...(local.deletedLoanIds || {}),
+  })
 
-  // If remote has new transactions not present in local, calculate their financial delta
+  // Index deleted repayment IDs and signatures for safe loan repayment deletion reconciliation
+  const deletedRepaymentIds = new Set(Object.keys(mergedDeletedTxIds))
+  const deletedRepaymentSignatures = new Set()
+
+  for (const tx of [...(local.transactions || []), ...(remote.transactions || [])]) {
+    if (mergedDeletedTxIds[tx.id] && (tx.type === 'loan_repayment' || tx.type === 'loan_collection')) {
+      if (tx.repaymentId) {
+        deletedRepaymentIds.add(tx.repaymentId)
+      }
+      if (tx.loanId && tx.date && Number(tx.amount)) {
+        deletedRepaymentSignatures.add(`${tx.loanId}_${tx.date}_${tx.amount}`)
+      }
+    }
+  }
+
   let nextBalance = local.balance
   let nextSavings = local.savings
+  const localSurvivingTxs = []
 
+  const remoteTxMap = new Map((remote.transactions || []).map((t) => [t.id, t]))
+  const lastSyncTime = lastSyncedAt ? new Date(lastSyncedAt).getTime() : null
+
+  // Check if any local transaction was deleted on remote (either explicitly tombstoned or missing after tombstone pruning)
+  for (const tx of local.transactions || []) {
+    const isExplicitlyTombstoned = Boolean(mergedDeletedTxIds[tx.id])
+    const isMissingFromRemote = !remoteTxMap.has(tx.id)
+    const txCreatedTime = tx.createdAt ? new Date(tx.createdAt).getTime() : 0
+    // If a transaction existed before the last sync with remote, but is now missing from remote,
+    // it was deleted on remote while this device was offline (even if the tombstone was pruned)
+    const isPrunedRemoteDeletion =
+      !isExplicitlyTombstoned &&
+      isMissingFromRemote &&
+      lastSyncTime !== null &&
+      txCreatedTime > 0 &&
+      txCreatedTime <= lastSyncTime
+
+    if (isExplicitlyTombstoned || isPrunedRemoteDeletion) {
+      if (isPrunedRemoteDeletion) {
+        mergedDeletedTxIds[tx.id] = new Date().toISOString()
+      }
+      // If deleted on remote but not locally known as deleted, reverse its balance impact on local
+      if (!local.deletedTxIds?.[tx.id]) {
+        const amt = tx.amount || 0
+        const txType = tx.type
+        if (txType === 'income' || txType === 'salary' || (txType === 'add' && tx.category !== 'Loan')) {
+          nextBalance = subMoney(nextBalance, amt)
+        } else if (txType === 'spent' || txType === 'expense') {
+          nextBalance = addMoney(nextBalance, amt)
+        } else if (txType === 'savings_deposit' || txType === 'auto_save') {
+          nextBalance = addMoney(nextBalance, amt)
+          nextSavings = subMoney(nextSavings, amt)
+        } else if (txType === 'savings_withdraw') {
+          nextBalance = subMoney(nextBalance, amt)
+          nextSavings = addMoney(nextSavings, amt)
+        } else if (txType === 'loan_borrow') {
+          nextBalance = subMoney(nextBalance, amt)
+        } else if (txType === 'loan_lend') {
+          nextBalance = addMoney(nextBalance, amt)
+        } else if (txType === 'loan_repayment') {
+          nextBalance = addMoney(nextBalance, amt)
+        } else if (txType === 'loan_collection') {
+          nextBalance = subMoney(nextBalance, amt)
+        }
+      }
+    } else {
+      localSurvivingTxs.push(tx)
+    }
+  }
+
+  const localTxMap = new Map(localSurvivingTxs.map((t) => [t.id, t]))
+  // Remote-only transactions that are NOT in mergedDeletedTxIds
+  const remoteOnlyTxs = (remote.transactions || []).filter(
+    (t) => !localTxMap.has(t.id) && !mergedDeletedTxIds[t.id]
+  )
+
+  // If remote has new transactions not present in local, calculate their financial delta
   for (const tx of remoteOnlyTxs) {
     const amt = tx.amount || 0
     const txType = tx.type
@@ -855,26 +1139,87 @@ export function reconcileStates(localState, remoteState) {
   }
 
   // Union transactions preserving reverse chronological order
-  const allTxs = [...local.transactions, ...remoteOnlyTxs]
+  const allTxs = [...localSurvivingTxs, ...remoteOnlyTxs]
   allTxs.sort((a, b) => {
     const dateComp = (b.date || '').localeCompare(a.date || '')
     if (dateComp !== 0) return dateComp
     return (b.createdAt || '').localeCompare(a.createdAt || '')
   })
 
-  // Reconcile Loans
-  const localLoanMap = new Map((local.loans || []).map((l) => [l.id, { ...l }]))
+  // Reconcile Loans (skipping deleted loans and filtering deleted repayments)
+  const isRepDeleted = (loanId, r) =>
+    (r.id && deletedRepaymentIds.has(r.id)) ||
+    (r.date && r.amount && deletedRepaymentSignatures.has(`${loanId}_${r.date}_${r.amount}`))
+
+  const remoteLoanMap = new Map((remote.loans || []).map((l) => [l.id, l]))
+
+  const localLoanMap = new Map()
+  for (const l of local.loans || []) {
+    const isExplicitlyTombstoned = Boolean(mergedDeletedLoanIds[l.id])
+    const isMissingFromRemote = !remoteLoanMap.has(l.id)
+    const lCreatedTime = l.createdAt ? new Date(l.createdAt).getTime() : 0
+    const isPrunedRemoteDeletion =
+      !isExplicitlyTombstoned &&
+      isMissingFromRemote &&
+      lastSyncTime !== null &&
+      lCreatedTime > 0 &&
+      lCreatedTime <= lastSyncTime
+
+    if (isExplicitlyTombstoned || isPrunedRemoteDeletion) {
+      if (isPrunedRemoteDeletion) {
+        mergedDeletedLoanIds[l.id] = new Date().toISOString()
+      }
+      continue
+    }
+
+    const survivingReps = (l.repayments || []).filter((r) => !isRepDeleted(l.id, r))
+    const totalRepaid = survivingReps.reduce((sum, r) => addMoney(sum, r.amount), 0)
+    const newOutstanding = Math.max(0, subMoney(l.amount, totalRepaid))
+    localLoanMap.set(l.id, {
+      ...l,
+      repayments: survivingReps,
+      outstanding: newOutstanding,
+      status:
+        toPaise(newOutstanding) === 0
+          ? 'repaid'
+          : toPaise(newOutstanding) === toPaise(l.amount)
+          ? 'active'
+          : 'partially_paid',
+    })
+  }
 
   for (const rLoan of remote.loans || []) {
+    if (mergedDeletedLoanIds[rLoan.id]) continue
+
     if (!localLoanMap.has(rLoan.id)) {
-      localLoanMap.set(rLoan.id, { ...rLoan })
+      const survivingReps = (rLoan.repayments || []).filter((r) => !isRepDeleted(rLoan.id, r))
+      const totalRepaid = survivingReps.reduce((sum, r) => addMoney(sum, r.amount), 0)
+      const newOutstanding = Math.max(0, subMoney(rLoan.amount, totalRepaid))
+      localLoanMap.set(rLoan.id, {
+        ...rLoan,
+        repayments: survivingReps,
+        outstanding: newOutstanding,
+        status:
+          toPaise(newOutstanding) === 0
+            ? 'repaid'
+            : toPaise(newOutstanding) === toPaise(rLoan.amount)
+            ? 'active'
+            : 'partially_paid',
+      })
     } else {
       const existing = localLoanMap.get(rLoan.id)
-      const existingRepMap = new Map((existing.repayments || []).map((r) => [r.id || `${r.date}_${r.amount}`, r]))
+      const existingRepMap = new Map()
+      for (const r of existing.repayments || []) {
+        if (!isRepDeleted(existing.id, r)) {
+          existingRepMap.set(r.id || `${r.date}_${r.amount}`, r)
+        }
+      }
       for (const rep of rLoan.repayments || []) {
-        const key = rep.id || `${rep.date}_${rep.amount}`
-        if (!existingRepMap.has(key)) {
-          existingRepMap.set(key, rep)
+        if (!isRepDeleted(existing.id, rep)) {
+          const key = rep.id || `${rep.date}_${rep.amount}`
+          if (!existingRepMap.has(key)) {
+            existingRepMap.set(key, rep)
+          }
         }
       }
       const mergedRepayments = Array.from(existingRepMap.values())
@@ -922,12 +1267,14 @@ export function reconcileStates(localState, remoteState) {
 
   return {
     balance: nextBalance,
-    savings: nextSavings,
+    savings: Math.max(0, nextSavings),
     savingsGoal: remoteTime > localTime ? remote.savingsGoal : local.savingsGoal,
     loans: Array.from(localLoanMap.values()),
     transactions: allTxs,
     lastSalaryMonth,
     recurringIncomeHistory,
+    deletedTxIds: mergedDeletedTxIds,
+    deletedLoanIds: mergedDeletedLoanIds,
     settings: latestSettings,
     updatedAt: new Date().toISOString(),
   }

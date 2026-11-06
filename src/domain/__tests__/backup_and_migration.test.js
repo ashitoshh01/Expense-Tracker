@@ -7,7 +7,7 @@ import {
   validateAmount,
   formatAmount,
 } from '../money'
-import { normalizeState, SCHEMA_VERSION } from '../accounting'
+import { normalizeState, SCHEMA_VERSION, processRecurringIncomesAutomation } from '../accounting'
 import {
   generateCSV,
   generateBackupJSON,
@@ -173,6 +173,15 @@ describe('Section 3, 8 & 9: Money Precision, Migration & Backup Restore Suite', 
             date: '2026-10-01',
           },
         ],
+        recurringIncomeHistory: {
+          'inc_src_1_2026-11': true,
+        },
+        deletedTxIds: {
+          'tx-old-deleted': '2026-10-15T12:00:00.000Z',
+        },
+        deletedLoanIds: {
+          'loan-old-deleted': '2026-10-15T12:00:00.000Z',
+        },
       })
 
       const backup = generateBackupJSON(original)
@@ -189,6 +198,33 @@ describe('Section 3, 8 & 9: Money Precision, Migration & Backup Restore Suite', 
       expect(restored.loans[0].repayments[0].id).toBe('rep-1')
       expect(restored.transactions[0].id).toBe('tx-100')
       expect(restored.transactions[0].amount).toBe(85000)
+      expect(restored.recurringIncomeHistory).toEqual({ 'inc_src_1_2026-11': true })
+      expect(restored.deletedTxIds).toEqual({ 'tx-old-deleted': '2026-10-15T12:00:00.000Z' })
+      expect(restored.deletedLoanIds).toEqual({ 'loan-old-deleted': '2026-10-15T12:00:00.000Z' })
+    })
+
+    it('prevents recurring income double credits after restore from backup', () => {
+      const stateWithCreditedIncome = normalizeState({
+        balance: 50000,
+        settings: {
+          recurringIncomes: [
+            { id: 'src-job', name: 'Primary Job', amount: 50000, creditDay: 1, enabled: true },
+          ],
+        },
+        recurringIncomeHistory: {
+          'src-job_2026-11': true,
+        },
+      })
+
+      // Generate backup and restore
+      const backup = generateBackupJSON(stateWithCreditedIncome)
+      const restored = validateAndParseImport(JSON.stringify(backup)).data
+
+      // Now run processRecurringIncomesAutomation for 2026-11-05
+      const result = processRecurringIncomesAutomation(restored, { now: new Date(2026, 10, 5) })
+      expect(result.processed).toBe(false)
+      expect(result.state.balance).toBe(50000)
+      expect(result.state.transactions).toHaveLength(0)
     })
   })
 })

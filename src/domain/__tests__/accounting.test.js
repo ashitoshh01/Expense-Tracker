@@ -12,6 +12,7 @@ import {
   editTransaction,
   processSalaryAutomation,
   DEFAULT_SETTINGS,
+  pruneTombstones,
 } from '../accounting'
 
 describe('Domain: Money Math & Validation', () => {
@@ -319,6 +320,143 @@ describe('Domain: Critical Accounting Mutations', () => {
       expect(freshState.settings.autoSaveAmount).toBe(0)
       expect(freshState.settings.autoSaveEnabled).toBe(false)
       expect(freshState.settings.recurringIncomes).toEqual([])
+      expect(freshState.deletedTxIds).toEqual({})
+      expect(freshState.deletedLoanIds).toEqual({})
+    })
+  })
+
+  describe('Loan Integrity & Metadata Synchronization (Stage 2)', () => {
+    it('restores mathematical consistency when loan outstanding balance is malformed or out of sync', () => {
+      const malformed = {
+        balance: 10000,
+        loans: [
+          {
+            id: 'loan-sync-1',
+            name: 'Debt 1',
+            amount: 5000,
+            outstanding: 99999, // Corrupted: exceeds original amount
+            repayments: [
+              { id: 'rep-1', amount: 1500, date: '2026-10-01' },
+              { id: 'rep-2', amount: 500, date: '2026-10-05' },
+            ],
+          },
+          {
+            id: 'loan-sync-2',
+            name: 'Debt 2',
+            amount: 3000,
+            outstanding: -200, // Corrupted: negative outstanding
+            repayments: [],
+          },
+        ],
+      }
+
+      const normalized = normalizeState(malformed)
+      // Debt 1: 5000 - (1500 + 500) = 3000
+      expect(normalized.loans[0].outstanding).toBe(3000)
+      expect(normalized.loans[0].status).toBe('partially_paid')
+
+      // Debt 2: 3000 - 0 = 3000
+      expect(normalized.loans[1].outstanding).toBe(3000)
+      expect(normalized.loans[1].status).toBe('active')
+    })
+
+    it('matches and deletes legacy borrowed loan with note "Borrowed from Alex"', () => {
+      const state = normalizeState({
+        balance: 5000,
+        loans: [
+          {
+            id: 'legacy-loan-1',
+            name: 'Alex',
+            type: 'borrowed',
+            amount: 2000,
+            outstanding: 2000,
+            repayments: [],
+          },
+        ],
+        transactions: [
+          {
+            id: 'tx-legacy-borrow',
+            type: 'loan_borrow',
+            amount: 2000,
+            note: 'Borrowed from Alex', // Legacy note format
+            // Notice: no loanId on legacy transaction!
+          },
+        ],
+      })
+
+      const afterDelete = deleteTransaction(state, 'tx-legacy-borrow')
+      expect(afterDelete.balance).toBe(3000) // 5000 - 2000
+      expect(afterDelete.loans).toHaveLength(0)
+      expect(afterDelete.transactions).toHaveLength(0)
+      expect(afterDelete.deletedTxIds['tx-legacy-borrow']).toBeDefined()
+      expect(afterDelete.deletedLoanIds['legacy-loan-1']).toBeDefined()
+    })
+
+    it('updates both the transaction and loan repayment metadata when editing note/date', () => {
+      let state = normalizeState({ balance: 10000 })
+      state = createLoan(state, { name: 'Bob', amount: 4000, type: 'borrowed' })
+      const loanId = state.loans[0].id
+      state = repayLoan(state, { loanId, amount: 1000, note: 'Initial installment', date: '2026-10-01' })
+
+      const repaymentTx = state.transactions.find((t) => t.type === 'loan_repayment')
+      expect(repaymentTx).toBeDefined()
+
+      // Edit metadata only
+      const updated = editTransaction(state, repaymentTx.id, {
+        note: 'Updated installment note',
+        date: '2026-10-02',
+      })
+
+      // Transaction is updated
+      const updatedTx = updated.transactions.find((t) => t.id === repaymentTx.id)
+      expect(updatedTx.note).toBe('Updated installment note')
+      expect(updatedTx.date).toBe('2026-10-02')
+
+      // Loan's repayments array record is also updated
+      const updatedLoan = updated.loans.find((l) => l.id === loanId)
+      expect(updatedLoan.repayments[0].note).toBe('Updated installment note')
+      expect(updatedLoan.repayments[0].date).toBe('2026-10-02')
+    })
+
+    it('rejects editing loan transaction amount with a clear validation error', () => {
+      let state = normalizeState({ balance: 10000 })
+      state = createLoan(state, { name: 'Charlie', amount: 2000, type: 'borrowed' })
+      const loanId = state.loans[0].id
+      state = repayLoan(state, { loanId, amount: 500 })
+
+      const repaymentTx = state.transactions.find((t) => t.type === 'loan_repayment')
+
+      expect(() => editTransaction(state, repaymentTx.id, { amount: 600 })).toThrow(
+        /Editing the amount or type of a loan transaction is not supported/
+      )
+    })
+  })
+
+  describe('Tombstone Pruning & Retention (Stage 4)', () => {
+    it('prunes tombstones older than maxAgeDays while preserving minKeep newest entries', () => {
+      const now = Date.now()
+      const dayMs = 24 * 60 * 60 * 1000
+
+      // Create 10 tombstones: 5 very old (>100 days), 5 recent
+      const tombstones = {}
+      for (let i = 1; i <= 5; i++) {
+        tombstones[`old-${i}`] = new Date(now - (100 + i) * dayMs).toISOString()
+      }
+      for (let i = 1; i <= 5; i++) {
+        tombstones[`recent-${i}`] = new Date(now - i * dayMs).toISOString()
+      }
+
+      // If minKeep is 3 and maxAgeDays is 90:
+      // The 5 recent ones are kept (age < 90), old ones are pruned
+      const pruned = pruneTombstones(tombstones, { maxAgeDays: 90, minKeep: 3 })
+      expect(Object.keys(pruned)).toHaveLength(5)
+      expect(pruned['recent-1']).toBeDefined()
+      expect(pruned['old-1']).toBeUndefined()
+
+      // If minKeep is 8 and maxAgeDays is 90:
+      // All 5 recent ones + 3 newest old ones must be kept to satisfy minKeep: 8
+      const prunedMinKeep = pruneTombstones(tombstones, { maxAgeDays: 90, minKeep: 8 })
+      expect(Object.keys(prunedMinKeep)).toHaveLength(8)
     })
   })
 })

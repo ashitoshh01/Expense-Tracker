@@ -99,4 +99,28 @@ describe('Services: SyncManager & Offline Resilience (C6)', () => {
     expect(localTime > remoteTime).toBe(true)
     manager.destroy()
   })
+
+  it('guarantees state identity comparison matches exact content and catches transaction differences', () => {
+    const manager = new SyncManager(mockUserId, vi.fn(), vi.fn())
+
+    const s1 = normalizeState({
+      balance: 1000,
+      updatedAt: '2026-11-06T10:00:00.000Z',
+      transactions: [{ id: 'tx-1', amount: 500 }],
+    })
+    const s2 = normalizeState({
+      balance: 1000,
+      updatedAt: '2026-11-06T10:00:00.000Z',
+      transactions: [{ id: 'tx-1', amount: 500 }],
+    })
+    const s3 = normalizeState({
+      balance: 1000,
+      updatedAt: '2026-11-06T10:00:00.000Z',
+      transactions: [{ id: 'tx-2', amount: 500 }],
+    })
+
+    expect(manager._isStateEqual(s1, s2)).toBe(true)
+    expect(manager._isStateEqual(s1, s3)).toBe(false)
+    manager.destroy()
+  })
 })

@@ -6,6 +6,8 @@ import {
   updateRecurringIncome,
   deleteRecurringIncome,
   processRecurringIncomesAutomation,
+  deleteTransaction,
+  editTransaction,
 } from '../accounting'
 
 describe('Automated Recurring Incomes & Zero Hardcoded Defaults Suite', () => {
@@ -141,5 +143,133 @@ describe('Automated Recurring Incomes & Zero Hardcoded Defaults Suite', () => {
     expect(day16Run.creditedSources[0].name).toBe('Rental Property')
     expect(day16Run.state.balance).toBe(55000) // 40000 + 15000 net
     expect(day16Run.state.savings).toBe(5000)
+  })
+
+  describe('Compound Recurring Income & Auto-Save Reversal Suite (Stage 3)', () => {
+    it('creates bidirectional linkedTxId between income and auto-save deposit legs', () => {
+      let state = normalizeState({ balance: 0, savings: 0 })
+      state = addRecurringIncome(state, {
+        name: 'Salary with Auto-Save',
+        category: 'Salary',
+        amount: 50000,
+        creditDay: 1,
+        autoSaveAmount: 10000,
+      })
+
+      const run = processRecurringIncomesAutomation(state, { now: new Date('2026-10-01T10:00:00Z') })
+      expect(run.processed).toBe(true)
+      expect(run.state.transactions).toHaveLength(2)
+
+      const salaryTx = run.state.transactions.find((t) => t.type === 'salary')
+      const saveTx = run.state.transactions.find((t) => t.type === 'savings_deposit')
+
+      expect(salaryTx).toBeDefined()
+      expect(saveTx).toBeDefined()
+      expect(salaryTx.linkedTxId).toBe(saveTx.id)
+      expect(saveTx.linkedTxId).toBe(salaryTx.id)
+      expect(salaryTx.sourceId).toBe(state.settings.recurringIncomes[0].id)
+      expect(saveTx.sourceId).toBe(state.settings.recurringIncomes[0].id)
+    })
+
+    it('atomically reverses compound salary credit and auto-save deposit when deleting salary transaction', () => {
+      let state = normalizeState({ balance: 1000, savings: 500 })
+      state = addRecurringIncome(state, {
+        name: 'Salary',
+        category: 'Salary',
+        amount: 50000,
+        creditDay: 1,
+        autoSaveAmount: 15000,
+      })
+
+      // Run automation: balance = 1000 + 35000 = 36000, savings = 500 + 15000 = 15500
+      const run = processRecurringIncomesAutomation(state, { now: new Date('2026-10-01T10:00:00Z') })
+      const salaryTx = run.state.transactions.find((t) => t.type === 'salary')
+      const saveTx = run.state.transactions.find((t) => t.type === 'savings_deposit')
+
+      // Deleting the salary transaction should reverse net cash and savings and remove BOTH transactions
+      const stateAfterDelete = deleteTransaction(run.state, salaryTx.id)
+
+      expect(stateAfterDelete.balance).toBe(1000)
+      expect(stateAfterDelete.savings).toBe(500)
+      expect(stateAfterDelete.transactions.find((t) => t.id === salaryTx.id)).toBeUndefined()
+      expect(stateAfterDelete.transactions.find((t) => t.id === saveTx.id)).toBeUndefined()
+      expect(stateAfterDelete.deletedTxIds[salaryTx.id]).toBeDefined()
+      expect(stateAfterDelete.deletedTxIds[saveTx.id]).toBeDefined()
+    })
+
+    it('reverses only the auto-save leg when deleting auto-save transaction, keeping salary intact and unlinking', () => {
+      let state = normalizeState({ balance: 0, savings: 0 })
+      state = addRecurringIncome(state, {
+        name: 'Salary',
+        category: 'Salary',
+        amount: 50000,
+        creditDay: 1,
+        autoSaveAmount: 10000,
+      })
+
+      const run = processRecurringIncomesAutomation(state, { now: new Date('2026-10-01T10:00:00Z') })
+      expect(run.state.balance).toBe(40000)
+      expect(run.state.savings).toBe(10000)
+
+      const salaryTx = run.state.transactions.find((t) => t.type === 'salary')
+      const saveTx = run.state.transactions.find((t) => t.type === 'savings_deposit')
+
+      // Delete only the auto-save leg
+      const stateAfterSaveDelete = deleteTransaction(run.state, saveTx.id)
+
+      // Cash gets the ₹10,000 back from savings
+      expect(stateAfterSaveDelete.balance).toBe(50000)
+      expect(stateAfterSaveDelete.savings).toBe(0)
+      expect(stateAfterSaveDelete.transactions).toHaveLength(1)
+      const survivingSalaryTx = stateAfterSaveDelete.transactions[0]
+      expect(survivingSalaryTx.id).toBe(salaryTx.id)
+      expect(survivingSalaryTx.linkedTxId).toBeUndefined()
+
+      // Later deleting the unlinked salary transaction properly deducts ₹50,000 from cash
+      const stateAfterSalaryDelete = deleteTransaction(stateAfterSaveDelete, salaryTx.id)
+      expect(stateAfterSalaryDelete.balance).toBe(0)
+      expect(stateAfterSalaryDelete.savings).toBe(0)
+      expect(stateAfterSalaryDelete.transactions).toHaveLength(0)
+    })
+
+    it('rejects deletion of compound salary if cash balance or savings balance is insufficient', () => {
+      let state = normalizeState({ balance: 0, savings: 0 })
+      state = addRecurringIncome(state, {
+        name: 'Salary',
+        category: 'Salary',
+        amount: 50000,
+        creditDay: 1,
+        autoSaveAmount: 10000,
+      })
+
+      const run = processRecurringIncomesAutomation(state, { now: new Date('2026-10-01T10:00:00Z') })
+      const salaryTx = run.state.transactions.find((t) => t.type === 'salary')
+
+      // Case 1: user spent credited cash so balance < 40000
+      const drainedCashState = { ...run.state, balance: 10000 }
+      expect(() => deleteTransaction(drainedCashState, salaryTx.id)).toThrow(/is less than net credited cash/)
+
+      // Case 2: user withdrew savings so savings < 10000
+      const drainedSavingsState = { ...run.state, savings: 5000 }
+      expect(() => deleteTransaction(drainedSavingsState, salaryTx.id)).toThrow(/is less than auto-saved amount/)
+    })
+
+    it('rejects editing the amount of linked automated recurring transaction', () => {
+      let state = normalizeState({ balance: 0, savings: 0 })
+      state = addRecurringIncome(state, {
+        name: 'Salary',
+        category: 'Salary',
+        amount: 50000,
+        creditDay: 1,
+        autoSaveAmount: 10000,
+      })
+
+      const run = processRecurringIncomesAutomation(state, { now: new Date('2026-10-01T10:00:00Z') })
+      const salaryTx = run.state.transactions.find((t) => t.type === 'salary')
+
+      expect(() => editTransaction(run.state, salaryTx.id, { amount: 60000 })).toThrow(
+        /Editing the amount of a linked recurring income transaction is not supported/
+      )
+    })
   })
 })

@@ -127,6 +127,16 @@ export default function App() {
   const dataLoadedRef = useRef(false)
   const syncManagerRef = useRef(null)
 
+  // Synchronous state and auth reference to guarantee zero stale closures & single execution per mutation
+  const stateRef = useRef(state)
+  const authUserRef = useRef(authUser)
+  authUserRef.current = authUser
+
+  const applyStateUpdate = useCallback((nextState) => {
+    stateRef.current = nextState
+    setState(nextState)
+  }, [])
+
   // PWA install state
   const [deferredPrompt, setDeferredPrompt] = useState(null)
   const [isInstalled, setIsInstalled] = useState(false)
@@ -172,25 +182,30 @@ export default function App() {
   // ─── Centralized State Mutation Handler ─────────────────────
   const mutateState = useCallback(
     (reducerFn, successMsg = '', toastVariant = '') => {
-      setState((prev) => {
-        try {
-          const next = reducerFn(prev)
-          const uid = authUser?.uid || 'anonymous_local'
-          persistScopedState(uid, next)
-          if (syncManagerRef.current) {
-            syncManagerRef.current.syncMutation(next)
-          }
-          if (successMsg) {
-            showToast(successMsg, toastVariant)
-          }
-          return next
-        } catch (err) {
-          showToast(err.message || 'Operation failed', 'error')
+      try {
+        const prev = stateRef.current
+        const next = reducerFn(prev)
+        if (!next || next === prev) {
           return prev
         }
-      })
+        applyStateUpdate(next)
+
+        const uid = authUserRef.current?.uid || 'anonymous_local'
+        persistScopedState(uid, next)
+        if (syncManagerRef.current) {
+          syncManagerRef.current.syncMutation(next)
+        }
+        const finalMsg = typeof successMsg === 'function' ? successMsg(next, prev) : successMsg
+        if (finalMsg) {
+          showToast(finalMsg, toastVariant)
+        }
+        return next
+      } catch (err) {
+        showToast(err.message || 'Operation failed', 'error')
+        return stateRef.current
+      }
     },
-    [authUser?.uid, showToast]
+    [applyStateUpdate, showToast]
   )
 
   // ─── Firebase Auth Initialization ─────────────────────────
@@ -231,18 +246,18 @@ export default function App() {
 
     const uid = authUser.uid
     const initial = loadInitialState(uid)
-    setState(initial)
+    applyStateUpdate(initial)
 
     const syncMgr = new SyncManager(
       uid,
       (remoteState) => {
-        setState(remoteState)
+        applyStateUpdate(remoteState)
         persistScopedState(uid, remoteState)
       },
       (status) => {
         setCloudStatus(status)
       },
-      () => loadInitialState(uid)
+      () => stateRef.current
     )
     syncManagerRef.current = syncMgr
 
@@ -255,7 +270,7 @@ export default function App() {
       if (e.key === getScopedStorageKey(uid) && e.newValue) {
         try {
           const freshLocal = normalizeState(JSON.parse(e.newValue))
-          setState(freshLocal)
+          applyStateUpdate(freshLocal)
         } catch (err) {
           console.warn('Failed parsing multi-tab storage update:', err)
         }
@@ -270,29 +285,30 @@ export default function App() {
         syncManagerRef.current = null
       }
     }
-  }, [authUser?.uid, markDataLoaded])
+  }, [authUser?.uid, applyStateUpdate, markDataLoaded])
 
   // ─── Idempotent Monthly Recurring Incomes Processing ──────────
   useEffect(() => {
     if (!dataLoaded || !authUser) return
 
-    mutateState((currentState) => {
-      const result = processRecurringIncomesAutomation(currentState)
-      if (result.processed && result.creditedSources?.length) {
-        const summary = result.creditedSources
-          .map((s) => `${s.name} (+₹${formatAmount(s.amount)})`)
-          .join(', ')
-        showToast(
-          `Automated Credit: ${summary}${
-            result.savedAmount > 0 ? ` (₹${formatAmount(result.savedAmount)} moved to savings)` : ''
-          }`,
-          'salary'
-        )
-        return result.state
-      }
-      return currentState
-    })
-  }, [dataLoaded, authUser?.uid, mutateState, showToast])
+    const preview = processRecurringIncomesAutomation(stateRef.current)
+    if (preview.processed && preview.creditedSources?.length) {
+      const summary = preview.creditedSources
+        .map((s) => `${s.name} (+₹${formatAmount(s.amount)})`)
+        .join(', ')
+      const msg = `Automated Credit: ${summary}${
+        preview.savedAmount > 0 ? ` (₹${formatAmount(preview.savedAmount)} moved to savings)` : ''
+      }`
+      mutateState(
+        (currentState) => {
+          const result = processRecurringIncomesAutomation(currentState)
+          return result.processed && result.creditedSources?.length ? result.state : currentState
+        },
+        msg,
+        'salary'
+      )
+    }
+  }, [dataLoaded, authUser?.uid, mutateState])
 
   // ─── Action Handlers ────────────────────────────────────────
 
@@ -359,7 +375,7 @@ export default function App() {
 
   // Transaction Deletion with Safe Financial Reversal
   const handleDeleteTx = (txId) => {
-    const tx = state.transactions.find((t) => t.id === txId)
+    const tx = (stateRef.current || state).transactions.find((t) => t.id === txId)
     if (!tx) return
 
     setConfirm({
@@ -441,7 +457,7 @@ export default function App() {
       variant: 'blue',
       onConfirm: () => {
         mutateState(
-          () => importedState,
+          () => normalizeState(importedState),
           'Backup data successfully restored! 🎉',
           'income'
         )
@@ -473,7 +489,7 @@ export default function App() {
   // Export handlers
   const handleExportCSV = () => {
     try {
-      exportToCSV(state.transactions)
+      exportToCSV((stateRef.current || state).transactions)
       showToast('CSV file exported successfully ✓', 'income')
       setModal(null)
     } catch (e) {
@@ -483,7 +499,7 @@ export default function App() {
 
   const handleExportJSON = () => {
     try {
-      exportToJSON(state)
+      exportToJSON(stateRef.current || state)
       showToast('JSON backup exported successfully ✓', 'income')
       setModal(null)
     } catch (e) {
@@ -530,6 +546,8 @@ export default function App() {
       onConfirm: async () => {
         try {
           const freshUser = await signOutUser()
+          const anonState = loadInitialState('anonymous_local')
+          applyStateUpdate(anonState)
           setAuthUser(freshUser)
           setConfirm(null)
           showToast('Signed out successfully. Data preserved.', 'income')
@@ -554,7 +572,7 @@ export default function App() {
     showToast('Uploading isolated state to Cloud Firestore...')
     try {
       const uid = authUser?.uid || 'anonymous_local'
-      await forcePushToCloud(uid, state)
+      await forcePushToCloud(uid, stateRef.current || state)
       setCloudStatus('synced')
       showToast('Data uploaded to Firebase Cloud! ✓', 'income')
     } catch (err) {

@@ -90,6 +90,9 @@ export function generateBackupJSON(state) {
       savingsGoal: normalized.savingsGoal,
       lastSalaryMonth: normalized.lastSalaryMonth,
       settings: normalized.settings,
+      recurringIncomeHistory: normalized.recurringIncomeHistory || {},
+      deletedTxIds: normalized.deletedTxIds || {},
+      deletedLoanIds: normalized.deletedLoanIds || {},
     },
   }
 }
